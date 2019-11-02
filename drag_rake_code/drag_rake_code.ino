@@ -56,21 +56,21 @@ IPAddress ip(69, 420, 69, 420); // nice
 void setup() {
 
 // Starting i2c 
-  Wire.begin(); // starts i2c
-  pinMode(switch_pin[1], OUTPUT);           // set switch pins to outputs
-  pinMode(switch_pin[2], OUTPUT);
+//   Wire.begin(); // starts i2c
+//   pinMode(switch_pin[1], OUTPUT);           // set switch pins to outputs
+//   pinMode(switch_pin[2], OUTPUT);
 
-  for (int i = 0; i < 2; i++){ // pulling calibration values from both pressure sensors
-     // Sensor Calibration Coefficients -----------------------------------------------------------------------
-     for (int i = 0; i < 9; i++) {
-       Wire.requestFrom(cal_reg[i],1);
+//   for (int i = 0; i < 2; i++){ // pulling calibration values from both pressure sensors
+//      // Sensor Calibration Coefficients -----------------------------------------------------------------------
+//      for (int i = 0; i < 9; i++) {
+//        Wire.requestFrom(cal_reg[i],1);
         
-       while(Wire.available()) {
-         int cal_val[i] = Wire.read(); 
-       }
-     }
-         pinSwitch(sensor1); // switch pins to get calibration data for other sensor
-  }
+//        while(Wire.available()) {
+//          int cal_val[i] = Wire.read(); 
+//        }
+//      }
+//          pinSwitch(sensor1); // switch pins to get calibration data for other sensor
+//   }
   
 // Starting network - Rui Santos 
 
