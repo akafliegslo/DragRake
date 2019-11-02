@@ -94,17 +94,17 @@ void setup() {
 void loop() {
 
 // Commanding and reading the sensor
-    Wire.beginTransmission(Amphenol_Address); // Begin transmission to the Sensor 
-    //Ask the particular registers for data
-    Wire.write(1); // number of bytes?
-    Wire.endTransmission(); // Ends the transmission and transmits the data from the register
-    Wire.requestFrom(start_comm[st_mode], P_SENSE_BYTES); // Read 7 bytes from sensor
+//     Wire.beginTransmission(Amphenol_Address); // Begin transmission to the Sensor 
+//     //Ask the particular registers for data
+//     Wire.write(1); // number of bytes?
+//     Wire.endTransmission(); // Ends the transmission and transmits the data from the register
+//     Wire.requestFrom(start_comm[st_mode], P_SENSE_BYTES); // Read 7 bytes from sensor
     
-    if (Wire.available()<=P_SENSE_BYTES) {  // reads data if wire is available  - check if correct number
-        for (int i = 0; i < P_SENSE_BYTES; i++) {
-            dataBuffer[i] = Wire.read(); // Reads the data from the register
-    }
-  }
+//     if (Wire.available()<=P_SENSE_BYTES) {  // reads data if wire is available  - check if correct number
+//         for (int i = 0; i < P_SENSE_BYTES; i++) {
+//             dataBuffer[i] = Wire.read(); // Reads the data from the register
+//     }
+//   }
 
 // Airspeed Calcs with acquired sensor data
 // outputs will be float top_diff_airspeed and float bottom_diff_airspeed
