@@ -14,13 +14,6 @@ int keyIndex = 0;                // your network key Index number (needed only f
 int status = WL_IDLE_STATUS;
 // Variables ---------------------------------------------------------------------------------------------------
 
-// i2c stuff
-int Amphenol_Address = 0x29; // sensor address
-#define P_SENSE_BYTES 7 // number of bytes coming from pressure sensor
-int dataBuffer[P_SENSE_BYTES];
-char msg[128]; // size of message
-int switch_pin[2] = {9, 10}; // these pins are the GPIO pins that switches between which sensor is being read
-bool sensor1 = 1; // used for switchPin, TRUE if using sensor 1,
 
 // Command Registers (i2c commands for the pressure transducer)
 
@@ -29,6 +22,8 @@ bool sensor1 = 1; // used for switchPin, TRUE if using sensor 1,
 #define Start_Average4 0xAD // Hexadecimal address for average of 4 reads
 #define Start_Average8 0xAE // Hexadecimal address for average of 8 reads
 #define Start_Average16 0xAF // Hexadecimal address for average of 16 reads
+#define s1Toggle 11
+#define s2Toggle 12
 
 // array of all commands to simplify changing modes (i2c stuff)
 byte start_comm[5] = {Start_Single, Start_Average2, Start_Average4, Start_Average8, Start_Average16};
@@ -38,31 +33,20 @@ int st_mode = 1; // command mode selector
 int cal_reg[11] = {47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57};
 
 
-
-
 //Danny's Mess of trying to get things to work
-String output26State = "off";
-int output26 = 9;
-String output27State = "off";
-int output27 = 10;
 String text[6];
 String color[6];
 int selected;
 #define VBATPIN A7
 float measuredvbat;
-#define EOC 10
-byte data[7];
-signed long raw;
-float scaled;
-#define twentyFour 16777216
-#define sixteen 65536
-#define eight 256
-long partA;
-long partB;
-long partC;
-
-
-
+float coeff[7];
+int32_t rawCoeff[4];
+int8_t rawTempCoeff[3];
+byte lowWord;
+byte highWord;
+byte words[20];
+float sensor1;
+float sensor2;
 
 
 
@@ -70,8 +54,6 @@ long partC;
 // Required for Serial on Zero based boards
 #define Serial SERIAL_PORT_USBVIRTUAL
 #endif
-
-
 
 
 #define REQ_BUF_SZ   50
@@ -98,8 +80,11 @@ String header;
 
 int cal_val[8];
 // Setup -------------------------------------------------------------------------------------------------------
-void setup() {
-  pinMode(EOC, INPUT);
+void setup()
+{
+  pinMode(s1Toggle, INPUT);
+  pinMode(s2Toggle, OUTPUT);
+  digitalWrite(s2Toggle, HIGH);
   Wire.begin();
   WiFi.setPins(8, 7, 4, 2);
   Serial.begin(115200); // change baud rate?
@@ -116,6 +101,7 @@ void setup() {
   }
   server.begin();
   printWiFiStatus();
+  requestCalib();
 }
 
 // Loop --------------------------------------------------------------------------------------------------------
@@ -220,28 +206,6 @@ void loop()
             client.println();
 
 
-
-
-            // The following example code turns the GPIOs on and off, we want this to display and
-            // change the sensor read type: single read, 2 reads, 4 reads, 8 reads, or 16 reads
-            // we also want the code to display the airspeed parameters (top and bottom diff_airspeed)
-            if (header.indexOf("GET /26/on") >= 0) {
-              Serial.println("GPIO 26 on");
-              output26State = "on";
-              digitalWrite(output26, HIGH);
-            } else if (header.indexOf("GET /26/off") >= 0) {
-              Serial.println("GPIO 26 off");
-              output26State = "off";
-              digitalWrite(output26, LOW);
-            } else if (header.indexOf("GET /27/on") >= 0) {
-              Serial.println("GPIO 27 on");
-              output27State = "on";
-              digitalWrite(output27, HIGH);
-            } else if (header.indexOf("GET /27/off") >= 0) {
-              Serial.println("GPIO 27 off");
-              output27State = "off";
-              digitalWrite(output27, LOW);
-            }
             //Set all the clickable buttons to be gray
             for (int i = 0; i < 6; i++)
             {
@@ -369,32 +333,90 @@ void loop()
   } // end if (client)
 }
 
+void takeMeasurements()
+{
+  toggle(1);
+  delay(1);
+  requestRead();
+  waitForDone();
+  sensor1 = requestData();
+  toggle(2);
+  requestRead();
+  waitForDone();
+  sensor2 = requestData();
+}
+
+void requestCalib()
+{
+  toggle(1);
+  //Coefficients are the same from both sensors, so we only need them from one
+  int j = 0;
+  for (byte i = 0x2F; i < 0x39; i++)
+  {
+    Wire.beginTransmission(0x29);
+    Wire.write(i);
+    Wire.endTransmission();
+    Wire.requestFrom(0x29, 3);
+    while (Wire.available())
+    {
+      words[j++] = Wire.read();
+    }
+  }
+  for (int b = 0; b < 4; b++)
+  {
+    rawCoeff[b] = (words[(4 * b)] << 24) | (words[(4 * b) + 1] << 16) | (words[(4 * b) + 2] << 8) | (words[(4 * b) + 3]);
+    coeff[b] = (float)rawCoeff[b] / (float)0x7FFFFFFF;
+  }
+  rawTempCoeff[0] = words[16];
+  rawTempCoeff[1] = words[17];
+  rawTempCoeff[2] = words[18];
+  coeff[4] = (float)rawTempCoeff[0] / (float)0x7F;
+  coeff[5] = (float)rawTempCoeff[1] / (float)0x7F;
+  coeff[6] = (float)rawTempCoeff[2] / (float)0x7F;
+}
+
+
+void toggle(int sensor)
+{
+  if (sensor == 1)
+  {
+    pinMode(s1Toggle, INPUT);
+    pinMode(s2Toggle, OUTPUT);
+    digitalWrite(s2Toggle, HIGH);
+  }
+  else if (sensor == 2)
+  {
+    pinMode(s1Toggle, OUTPUT);
+    pinMode(s2Toggle, INPUT);
+    digitalWrite(s1Toggle, HIGH);
+  }
+  else
+  {
+  }
+}
 
 
 // send the XML file with switch statuses and analog value
 void XML_response(WiFiClient cl)
 {
   int analog_val;
-
-  cl.print("<?xml version = \"1.0\" ?>");
-  cl.print("<inputs>");
-  cl.print("<upper>");
-  requestRead();
-  waitForEOC();
-  requestData();
-  cl.print(scaled);
-  cl.print("</upper>");
-  cl.print("<lower>");
-  cl.print(analogRead(3));
-  cl.print("</lower>");
-  cl.print("<average>");
-  cl.print(analogRead(2));
-  cl.print("</average>");
-  cl.print("<battery>");
+  takeMeasurements();
   float measuredvbat = analogRead(VBATPIN);
   measuredvbat *= 2;    // we divided by 2, so multiply back
   measuredvbat *= 3.3;  // Multiply by 3.3V, our reference voltage
   measuredvbat /= 1024; // convert to voltage
+  cl.print("<?xml version = \"1.0\" ?>");
+  cl.print("<inputs>");
+  cl.print("<upper>");
+  cl.print(sensor1);
+  cl.print("</upper>");
+  cl.print("<lower>");
+  cl.print(sensor2);
+  cl.print("</lower>");
+  cl.print("<average>");
+  cl.print((sensor1 + sensor2) / (float)2);
+  cl.print("</average>");
+  cl.print("<battery>");
   cl.print(measuredvbat);
   cl.print("</battery>");
   cl.print("</inputs>");
@@ -476,85 +498,73 @@ void requestRead()
 }
 
 
-void  waitForEOC()
+void  waitForDone()
 {
-  if (selected > 0)
+  int i = 0;
+  bool lineReady = 0;
+  while (lineReady == 0)
   {
-    int wait = 2;
-    while (wait == 2)
-    {
-      if (digitalRead(EOC) == 0)
-      {
-        wait = 1;
-        while (wait == 1)
-        {
-          if (digitalRead(EOC) == 1)
-          {
-            wait = 0;
-
-          }
-          else
-          {
-          }
-        }
-      }
-      else
-      {
-      }
-    }
-  }
-  else
-  {
-
-  }
-}
-
-void requestData()
-{
-  if (selected > 0)
-  {
-    Wire.requestFrom(0x29, 7);
-    int i = 0;
+    Wire.requestFrom(0x29, 1);
+    byte Status = 0;
+    bool lineReady = 0;
     while (Wire.available())
     {
-      data[i++] = Wire.read();
+      Status = Wire.read();
     }
-    int A = (data[1]);
-    int B = (data[2]);
-    int C = (data[3]);
-    partA = (A * sixteen);
-    partB = (B * eight);
-    raw = (partA + partB + C);
-    scaled = 8567500 - raw;
-  }
-  else
-  {
-    scaled = 0;
+    if (bitRead(Status, 5) == 0)
+    {
+      lineReady = 1;
+      break;
+    }
+    else
+    {
+    }
+
   }
 }
 
+float requestData()
+{
+  int32_t iPraw;
+  float pressure;
+  int32_t iTemp;
+  unsigned char data[7] = {0};
+  float AP3, BP2, CP, LCorr, PCorr, Padj, TCadj, TC50, Pnorm;
+  int32_t Tdiff, Tref, iPCorrected;
+  uint32_t uiPCorrected;
 
-
-
-
-
-
-
-// Embedded Functions ------------------------------------------------------------------------------------------
-
-//void pinSwitch(sensor1) {
-//  // Switches which pressure sensor is being read/commanded by "jamming" the other sensor by writing
-//  // high to SDA on the inactive sensor
-//  if (sensor1 == TRUE) { // reading from sensor 1
-//    digitalWrite(switch_pin[1], HIGH); // disables sensor 1, enables sensor 2
-//    digitalWrite(switch_pin[2], LOW);
-//    sensor1 = FALSE; // switches sensor1 value, sensor 2 is now being read from
-//
-//    else {
-//      digitalWrite(switch_pin[2], HIGH);
-//      digitalWrite(switch_pin[1], LOW);
-//      sensor1 = TRUE; // sensor 1 now being read from
-//    }
-////    return sensor1
-//  }
-//}
+  Wire.requestFrom(0x29, 7);
+  int i = 0;
+  while (Wire.available())
+  {
+    data[i++] = Wire.read();
+  }
+  iPraw = ((data[1] << 16) + (data[2] << 8) + (data[3]) - 0x800000);
+  iTemp = (data[4] << 16) + (data[5] << 8) + (data[6]);
+  Pnorm = (float)iPraw;
+  Pnorm /= (float) 0x7FFFFF;
+  AP3 = coeff[0] * Pnorm * Pnorm * Pnorm;
+  BP2 = coeff[1] * Pnorm * Pnorm;
+  CP = coeff[2] * Pnorm;
+  LCorr = AP3 + BP2 + CP + coeff[3];
+  // Compute Temperature - Dependent Adjustment:
+  Tref = (int32_t)(pow(2, 24) * 65 / 125); // Reference Temperature, in sensor counts
+  Tdiff = iTemp - Tref;
+  Tdiff = Tdiff / 0x7FFFFF;
+  //TC50: Select High/Low, based on sensor temperature reading:
+  if (iTemp > Tref)
+    TC50 = (coeff[4] - 1);
+  else
+    TC50 = (coeff[5] - 1);
+  if (Pnorm > 0.5)
+    Padj = Pnorm - 0.5;
+  else
+    Padj = 0.5 - Pnorm;
+  TCadj = (1.0 - (coeff[6] * 1.25 * Padj)) * Tdiff * TC50;
+  PCorr = Pnorm + LCorr + TCadj; // corrected P: float, ±1.0
+  iPCorrected = (int32_t)(PCorr * (float)0x7FFFFF); // corrected P: signed int32
+  uiPCorrected = (uint32_t) (iPCorrected + 0x800000);
+  pressure = ((float)12.5 * ((float)uiPCorrected / (float)pow(2, 23)));
+  pressure = pressure - (float) 9.69;
+  return pressure;
+}
