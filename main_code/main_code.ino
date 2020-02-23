@@ -1,13 +1,22 @@
 // DRAGRAKE
 // Written by Danny Maas, Bennett Diamond and Christian BLoemhof
-// Collects pressure transducer data via i2c, processes data to make airspeed readings, 
+// Collects pressure transducer data via SPI, records data to SD card
 // Creates WiFi network, hosts a webpage that displays this data
 
+// SD Card Data Format:
+// Title: data.txt (will add a number if file already exists)
+// Data is TAB delineated!!!! Headers included at top of file for ease of analysis
+// Top line: Temperature Calibration Coef.,   Pressure Calibration Coef.
+// Successive Lines: Record time (from starting in millisecs), Top Pressure, Bottom Pressure, 
+// Top Temp, Bottom Temp, Battery Voltage ANYTHING ELSE????
 
-// Libraries ---------------------------------------------------------------------------------------------------
+// Libraries ----------------------------------------------------------------------------------------
+#include "Arduino.h"
 #include <Wire.h>
 #include <SPI.h>
 #include <WiFi101.h>
+#include <SD.h>
+
 char ssid[] = "DragRake";         // Network Name
 char pass[] = "";                 // Network password
 int keyIndex = 0;                
@@ -71,7 +80,12 @@ WiFiServer server(80);
 // Variable to store the HTTP request
 String header;
 
-// Setup -------------------------------------------------------------------------------------------------------
+// SD Card Variables
+#define SD_card_CS 12   // Find proper pin for SD card chip select
+File dataFile;    // initializing file
+
+
+// Setup -------------------------------------------------------------------------------------------
 void setup()
 {
   // Set one sensor to active, the other to off
@@ -100,6 +114,36 @@ void setup()
   server.begin();
   printWiFiStatus();
   requestCalib();
+
+  // Initializing Sd card interface
+  SD.begin(SD_card_CS);
+  if !(SD.begin(SD_card_CS))
+  {
+    Serial.println("SD Card Failure");
+    while(1);
+  }
+
+  // Creating unique file name to avoid overwriting existing files
+  String current_file = "null"; // start with no name
+  while (SD.exists(current_file))
+  {
+    int i;
+    current_file = String("data" + i + ".txt");
+    i++
+  }
+
+  // Adding headers to data file
+  File dataFile = SD.open(current_file, FILE_WRITE);
+  String dataHeader = "Temperature Calibration Coef.   Pressure Calibration Coef. \n
+  Time (from starting) Top Pressure, Bottom Pressure  Top Temp  Bottom Temp";
+
+  // if the file is available, write to it:
+  if (dataFile) {
+    dataFile.println(dataHeader);
+    dataFile.close();
+    // print to the serial port too:
+    Serial.println(dataHeader);
+  }
 }
 
 // Loop --------------------------------------------------------------------------------------------------------
@@ -197,6 +241,8 @@ void loop()
             client.println();
             // send XML file containing input states
             XML_response(client);
+
+            SD_write(); // write data to SD card
           }
           else {
             client.println("Content-Type: text/html");
@@ -340,7 +386,11 @@ void loop()
     delay(1);      // give the web browser time to receive the data
     client.stop(); // close the connection
   } // end if (client)
+
 }
+
+
+// Functions ---------------------------------------------------------------------------------------------
 
 // Reads data from both sensors and stores it in global variable
 void takeMeasurements()
@@ -545,8 +595,6 @@ void  waitForDone()
 // Requests temperature and pressure data back from sensors
 float requestData()
 {
-  int sign;
-  float deltaV;
   int32_t iPraw;
   float pressure;
   int32_t iTemp;
@@ -594,17 +642,31 @@ float requestData()
   iPCorrected = (int32_t)(PCorr * (float)0x7FFFFF); // corrected P: signed int32
   uiPCorrected = (uint32_t) (iPCorrected + 0x800000);
   pressure = ((float)12.5 * ((float)uiPCorrected / (float)pow(2, 23)));
-  pressure = pressure - (float) 9.69;
-  if (pressure < 0)
-  {
-    sign = -1;
-    //Can't take sqrt of negative
-  } else {
-    sign = 1; 
+  pressure -= (float) 9.69;
+  return pressure;
+}
+
+void SD_write()
+{
+  String dataString = "";
+
+  // Creating Data String, see top for formatting
+  dataString = String(millis() + "  " + sensor1 + "  " + sensor2 + 
+  "  " + temp1 + "  " + temp2 + " " + measuredvbat);
+
+  // open the file. note that only one file can be open at a time,
+  // so you have to close this one before opening another.
+  File dataFile = SD.open(current_file, FILE_WRITE);
+
+  // if the file is available, write to it:
+  if (dataFile) {
+    dataFile.println(dataString);
+    dataFile.close();
+    // print to the serial port too:
+    Serial.println(dataString);
   }
-  deltaV = sqrt((2 * (abs(pressure) * 249.089)) / (1.225)); //Pascals to meters per second
-  deltaV *= 1.943; //Metres per second to knots
-  Serial.print(" ");
-  Serial.println(deltaV);
-  return sign * deltaV;
+  // if the file isn't open, pop up an error:
+  else {
+    Serial.println("error opening file");
+  }
 }
