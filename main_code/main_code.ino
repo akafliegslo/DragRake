@@ -1,6 +1,6 @@
 // DRAGRAKE
 // Written by Danny Maas, Bennett Diamond and Christian BLoemhof
-// Collects pressure transducer data via i2c, processes data to make airspeed readings, 
+// Collects pressure transducer data via i2c, processes data to make airspeed readings,
 // Creates WiFi network, hosts a webpage that displays this data
 
 
@@ -10,11 +10,11 @@
 #include <WiFi101.h>
 char ssid[] = "DragRake";         // Network Name
 char pass[] = "";                 // Network password
-int keyIndex = 0;                
+int keyIndex = 0;
 int status = WL_IDLE_STATUS;
 // Variables ---------------------------------------------------------------------------------------
 
-// Command Registers (i2c commands for the pressure transducer)
+// Command Registers (SPI commands for the pressure transducer)
 
 #define Start_Single 0xAA     // Hexadecimal address for single read
 #define Start_Average2 0xAC   // Hexadecimal address for average of 2 reads
@@ -23,14 +23,16 @@ int status = WL_IDLE_STATUS;
 #define Start_Average16 0xAF  // Hexadecimal address for average of 16 reads
 #define s1Toggle 11           // Pin used to toggle sensor 1
 #define s2Toggle 12           // Pin used to toggle sensor 2
+#define SDToggle 10           // Pin used for SD card slave select
 
 // Array of all commands to simplify changing modes (i2c stuff)
-byte start_comm[5] = 
-{Start_Single, 
-Start_Average2, 
-Start_Average4, 
-Start_Average8, 
-Start_Average16};
+byte start_comm[5] =
+{ Start_Single,
+  Start_Average2,
+  Start_Average4,
+  Start_Average8,
+  Start_Average16
+};
 int st_mode = 1;              // Command mode selector
 
 // Array of calibration registers
@@ -71,27 +73,36 @@ WiFiServer server(80);
 // Variable to store the HTTP request
 String header;
 
+// SPI configurations
+SPISettings sensors(14000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
+
+
+
+
+
+
 // Setup -------------------------------------------------------------------------------------------------------
 void setup()
 {
   // Set one sensor to active, the other to off
-  pinMode(s1Toggle, INPUT);
+  pinMode(s1Toggle, OUTPUT);
   pinMode(s2Toggle, OUTPUT);
-  digitalWrite(s2Toggle, HIGH);
+  pinMode(SDToggle, OUTPUT);
 
   // Start I2C bus
-  Wire.begin();
+  // Wire.begin();
 
+  Serial.print("a");
   // Start WiFi network
   WiFi.setPins(8, 7, 4, 2);
   Serial.begin(9600);
   Serial.print("Creating access point named: ");
   Serial.println(ssid);
-  
+  Serial.print("a");
   // Override the default IP address of 192.168.1.1
   WiFi.config(IPAddress(4, 20, 6, 9));
   status = WiFi.beginAP(ssid);
-  
+  Serial.print("a");
   if (status != WL_AP_LISTENING) {
     Serial.println("Creating access point failed");
     // Don't continue if creating the WiFi network failed
@@ -100,6 +111,8 @@ void setup()
   server.begin();
   printWiFiStatus();
   requestCalib();
+//  SPI.begin();
+  Serial.print("a");
 }
 
 // Loop --------------------------------------------------------------------------------------------------------
@@ -115,19 +128,19 @@ void loop()
     {
       if (client.available())
       {
-        char c = client.read();             // Store the client data 
+        char c = client.read();             // Store the client data
 
         if (req_index < (REQ_BUF_SZ - 1)) {
           HTTP_req[req_index] = c;          // Save HTTP request character
           req_index++;
         }
         if ((72 < i) && (i < 75))           // The data we are looking for (from the buttons) is at characters 73 - 74
-                                            // We get back the length of the string from each button. This string length
-                                            // Is different for each button, so by reading this length we can figure out which
-                                            // Button was pressed. This allows button processing to be greatly sped up
+          // We get back the length of the string from each button. This string length
+          // Is different for each button, so by reading this length we can figure out which
+          // Button was pressed. This allows button processing to be greatly sped up
         {
           // Serial.println(c); //Debugging purposes
-          
+
           // This loop processes the data from the client request, and changes the variable "selected," which displays which
           // button has been pressed, as well as changes the averaging type
           char q[2];
@@ -185,7 +198,7 @@ void loop()
         {
         }
         // End of button processing code (probably could be done much more efficiently
-        
+
         i++;
         if (c == '\n' && currentLineIsBlank) {
           // send a standard http response header
@@ -242,25 +255,25 @@ void loop()
             //Attempt at Scaling
             client.println("<meta name = \"viewport\" content = \"width = device - width, initial - scale = 1\">");
             client.println("<style>");
-            
+
             //Set header properties (to get proper spacing):
             client.println("h1{line-height:64px;font-size: 32px;margin:0px;padding:0px;}");
             client.println("h2{line-height:0px;font-size: 32px;margin:0px;padding:0px;}");
-            
+
             //Button properties for the data readouts:
             client.println(".read {border: 2px solid black;margin: 12px 8px;background-color: white;color: black;");
             client.println("height: 64px;width: 128px;font-size: 32px;cursor: pointer;text-align: center;}");
-            
+
             //Create each data button (non-clickable):
             client.println(".upp {border-color: #000000;color: black;}");
             client.println(".low {border-color: #000000;color: black;}");
             client.println(".avg {border-color: #000000;color: black;}");
             client.println(".batt {border-color: #000000;color: black;}");
-            
+
             //Button properties for the clickable buttons :
             client.println(".btn {border: none;color: black;width: 128px; height: 64px;text - align: center;");
             client.println("font - size: 32px;margin: 4px 2px;border - radius: 20px;}");
-           
+
             //Create each clickable button:
             client.println(".off {color:" + text[0] + ";background-color: #" + color[0]);
             client.println(".single {color:" + text[1] + ";background-color: #" + color[1]);
@@ -269,10 +282,10 @@ void loop()
             client.println(".avg8 {color:" + text[4] + ";background-color: #" + color[4]);
             client.println(".avg16{color:" + text[5] + ";background-color: #" + color[5]);
             client.println("</style></head>");
-            
+
             //Body of code:
             client.println("<body onload=\"GetSwitchState()\">");
-            
+
             //Data Division:
             client.println("<div>");
             client.println("<h1>Akaflieg SLO Drag Rake</h1>");
@@ -297,8 +310,8 @@ void loop()
             client.println("</div>");
             client.println("</body></html>");
             client.println(); // The HTTP response ends with another blank line
-            
-            
+
+
             /*
                The text[] and color[] arrays simply hold a string telling the buttons what color
                to have the background and text. This is so that I can easily set them all to the
@@ -316,22 +329,22 @@ void loop()
             */
 
           }
-          
+
           // finished with request, empty string
           req_index = 0;
           StrClear(HTTP_req, REQ_BUF_SZ);
           break;
         }
-        
+
         // every line of text received from the client ends with \r\n
         if (c == '\n') {
-          
+
           // last character on line of received text
           // starting new line with next character read
           currentLineIsBlank = true;
         }
         else if (c != '\r') {
-          
+
           // a text character was received from client
           currentLineIsBlank = false;
         }
@@ -345,36 +358,40 @@ void loop()
 // Reads data from both sensors and stores it in global variable
 void takeMeasurements()
 {
-  toggle(1);
+  requestRead(1);
+  waitForDone(1);
+  sensor1 = requestData(2);
   delay(1);
-  requestRead();
-  waitForDone();
-  sensor1 = requestData();
-  toggle(2);
-  delay(1);
-  requestRead();
-  waitForDone();
-  sensor2 = requestData();
+  requestRead(2);
+  waitForDone(2);
+  sensor2 = requestData(2);
 }
 
 // Get calibration data from sensors (On startup)
 void requestCalib()
 {
-  // Sets sensor 1 to active
-  toggle(1);
-  
   //Coefficients are the same from both sensors, so we only need them from one
   int j = 0;
   for (byte i = 0x2F; i < 0x39; i++)
   {
-    Wire.beginTransmission(0x29);
-    Wire.write(i);
-    Wire.endTransmission();
-    Wire.requestFrom(0x29, 3);
-    while (Wire.available())
-    {
-      words[j++] = Wire.read();
-    }
+    SPI.beginTransaction(sensors);
+    toggle(1);
+    SPI.transfer(i);
+    SPI.transfer(0x00);
+    SPI.transfer(0x00);
+    uint32_t buff = (0xF0) | (0x00 << 8) | 0x00;
+    SPI.transfer(buff);
+
+    // Arduino transmits measurement start command, will receive back status byte and two bytes of "undefined data"
+    toggle(1);
+    SPI.endTransaction();
+
+    // Parse bytes into one "word"
+    word x = word(byte(buff >> 8), byte(buff));
+
+    // Add piece of data to the words
+    words[j++] = x;
+
   }
   for (int b = 0; b < 4; b++)
   {
@@ -392,22 +409,26 @@ void requestCalib()
 }
 
 // Toggles which sensor is active
+bool sen1 = HIGH;
+bool sen2 = HIGH;
+bool chip = HIGH;
+
 void toggle(int sensor)
 {
-  if (sensor == 1)
+  if (sensor == 2)
   {
-    pinMode(s1Toggle, INPUT);
-    pinMode(s2Toggle, OUTPUT);
-    digitalWrite(s2Toggle, HIGH);
+    digitalWrite(s2Toggle, !sen1);
+    sen1 = !sen1;
   }
-  else if (sensor == 2)
+  else if (sensor == 1)
   {
-    pinMode(s1Toggle, OUTPUT);
-    pinMode(s2Toggle, INPUT);
-    digitalWrite(s1Toggle, HIGH);
+    digitalWrite(s1Toggle, !sen2);
+    sen1 = !sen2;
   }
   else
   {
+    digitalWrite(SDToggle, !chip);
+    chip = !chip;
   }
 }
 
@@ -478,7 +499,7 @@ char StrContains(char *str, char *sfind)
 
 // Prints wifi status to serial port
 void printWiFiStatus() {
-  
+
   // print the SSID of the network you're attached to:
   Serial.print("SSID: ");
   Serial.println(WiFi.SSID());
@@ -493,21 +514,25 @@ void printWiFiStatus() {
   Serial.print("signal strength (RSSI):");
   Serial.print(rssi);
   Serial.println(" dBm");
-  
+
   // print where to go in a browser:
   Serial.print("To see this page in action, open a browser to http://");
   Serial.println(ip);
 }
 
 // Starts read of pressure and temperature data
-void requestRead()
+int requestRead(int tog)
 {
   // If button is not set to "Off"
   if (selected > 0)
   {
-    Wire.beginTransmission(0x29);
-    Wire.write(start_comm[selected - 1]);
-    Wire.endTransmission();
+    uint32_t buff = ((start_comm[selected - 1] << 16) | (0x00 << 8) | 0x00);
+    SPI.beginTransaction(sensors);
+    toggle(tog);
+    SPI.transfer(&buff, 3);
+    //Arduino transmits measurement start command, will receive back status byte and two bytes of "undefined data"
+    toggle(tog);
+    SPI.endTransaction();
   }
   else
   {
@@ -515,22 +540,24 @@ void requestRead()
 }
 
 // Allows us to wait for the sensor to be done reading before asking for data back
-void  waitForDone()
+int  waitForDone(int tog)
 {
   int i = 0;
   bool lineReady = 0;
   while (lineReady == 0)
   {
-    
-    // If the sensor is still taking data, the bit will be 1. 
+
+    // If the sensor is still taking data, the bit will be 1.
     // If it is ready, the bit will be zero, and we can read data.
-    Wire.requestFrom(0x29, 1);
-    byte Status = 0;
+    byte Status = 0xF0;
+    SPI.beginTransaction(sensors);
+    toggle(tog);
+
+    //Arduino transmits 0xF0, receives back status byte
+    SPI.transfer(&Status, 3);
+    toggle(tog);
+    SPI.endTransaction();
     bool lineReady = 0;
-    while (Wire.available())
-    {
-      Status = Wire.read();
-    }
     if (bitRead(Status, 5) == 0)
     {
       lineReady = 1;
@@ -543,30 +570,36 @@ void  waitForDone()
 }
 
 // Requests temperature and pressure data back from sensors
-float requestData()
+float requestData(int tog)
 {
   int sign;
   float deltaV;
   int32_t iPraw;
   float pressure;
   int32_t iTemp;
-  unsigned char data[7] = {0};
   float AP3, BP2, CP, LCorr, PCorr, Padj, TCadj, TC50, Pnorm;
   int32_t Tdiff, Tref, iPCorrected;
   uint32_t uiPCorrected;
 
-  // Request data from I2C device
-  Wire.requestFrom(0x29, 7);
-  int i = 0;
-  while (Wire.available())
-  {
-    // Add each bit to an array for ease of access
-    data[i++] = Wire.read();
-  }
+
+  // Get data from SPI lines
+  SPI.beginTransaction(sensors);
+  toggle(tog);
+  byte stat = SPI.transfer(0xF0);
+  byte p3 = SPI.transfer(0x00);
+  byte p2 = SPI.transfer(0x00);
+  byte p1 = SPI.transfer(0x00);
+  byte t3 = SPI.transfer(0x00);
+  byte t2 = SPI.transfer(0x00);
+  byte t1 = SPI.transfer(0x00);
+  unsigned char data[7] = {stat, p3, p2, p1, t3, t2, t1};
+
+  // Arduino transmits read command, gets back lots of data (hopefully)
+  toggle(tog);
+  SPI.endTransaction();
 
   //Big 'ol calculation (which may not actually be right :/
   iPraw = ((data[1] << 16) + (data[2] << 8) + (data[3]) - 0x800000);
-  Serial.print(iPraw);
   iTemp = (data[4] << 16) + (data[5] << 8) + (data[6]);
   Pnorm = (float)iPraw;
   Pnorm /= (float) 0x7FFFFF;
@@ -574,12 +607,12 @@ float requestData()
   BP2 = coeff[1] * Pnorm * Pnorm;
   CP = coeff[2] * Pnorm;
   LCorr = AP3 + BP2 + CP + coeff[3];
-  
+
   // Compute Temperature - Dependent Adjustment:
   Tref = (int32_t)(pow(2, 24) * 65 / 125); // Reference Temperature, in sensor counts
   Tdiff = iTemp - Tref;
   Tdiff = Tdiff / 0x7FFFFF;
-  
+
   //TC50: Select High/Low, based on sensor temperature reading:
   if (iTemp > Tref)
     TC50 = (coeff[4] - 1);
@@ -600,11 +633,9 @@ float requestData()
     sign = -1;
     //Can't take sqrt of negative
   } else {
-    sign = 1; 
+    sign = 1;
   }
   deltaV = sqrt((2 * (abs(pressure) * 249.089)) / (1.225)); //Pascals to meters per second
   deltaV *= 1.943; //Metres per second to knots
-  Serial.print(" ");
-  Serial.println(deltaV);
   return sign * deltaV;
 }
