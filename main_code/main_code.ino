@@ -11,7 +11,7 @@
 // Top Temp, Bottom Temp, Battery Voltage ANYTHING ELSE????
 
 // Libraries ----------------------------------------------------------------------------------------
-#include "Arduino.h"
+//#include "Arduino.h"
 #include <Wire.h>
 #include <SPI.h>
 #include <WiFi101.h>
@@ -117,7 +117,7 @@ void setup()
 
   // Initializing Sd card interface
   SD.begin(SD_card_CS);
-  if !(SD.begin(SD_card_CS))
+  if (!SD.begin(SD_card_CS))
   {
     Serial.println("SD Card Failure");
     while(1);
@@ -129,13 +129,12 @@ void setup()
   {
     int i;
     current_file = String("data" + i + ".txt");
-    i++
+    i++;
   }
 
   // Adding headers to data file
   File dataFile = SD.open(current_file, FILE_WRITE);
-  String dataHeader = "Temperature Calibration Coef.   Pressure Calibration Coef. \n
-  Time (from starting) Top Pressure, Bottom Pressure  Top Temp  Bottom Temp";
+  String dataHeader = "Temperature Calibration Coef.   Pressure Calibration Coef. \n Time (from starting) Top Pressure, Bottom Pressure  Top Temp  Bottom Temp";
 
   // if the file is available, write to it:
   if (dataFile) {
