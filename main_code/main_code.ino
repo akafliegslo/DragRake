@@ -82,7 +82,6 @@ String header;
 
 // SD Card Variables
 #define SD_card_CS 12   // Find proper pin for SD card chip select
-File dataFile;    // initializing file
 
 
 // Setup -------------------------------------------------------------------------------------------
@@ -124,11 +123,11 @@ void setup()
   }
 
   // Creating unique file name to avoid overwriting existing files
-  String current_file = "null"; // start with no name
-  while (SD.exists(current_file))
+  String current_file = "data.txt"; // start with no name
+  int i; // declare i for while loop
+  while (SD.exists(current_file)) // prevents overwriting data by generating a new file if one with the same name already exists
   {
-    int i;
-    current_file = String("data" + i + ".txt");
+    current_file = String("data" + String(i) + ".txt");
     i++;
   }
 
@@ -241,7 +240,6 @@ void loop()
             // send XML file containing input states
             XML_response(client);
 
-            SD_write(); // write data to SD card
           }
           else {
             client.println("Content-Type: text/html");
@@ -359,7 +357,7 @@ void loop()
 
                What can I say, I was desperate.
             */
-
+            SD_write(current_file); // write data to SD card
           }
           
           // finished with request, empty string
@@ -645,13 +643,13 @@ float requestData()
   return pressure;
 }
 
-void SD_write()
+void SD_write(String current_file)
 {
   String dataString = "";
 
   // Creating Data String, see top for formatting
-  dataString = String(millis() + "  " + sensor1 + "  " + sensor2 + 
-  "  " + temp1 + "  " + temp2 + " " + measuredvbat);
+  dataString = String(millis() + "  " + String(sensor1) + "  " + String(sensor2) + 
+  "  " + String(temp1) + "  " + String(temp2) + " " + String(measuredvbat));
 
   // open the file. note that only one file can be open at a time,
   // so you have to close this one before opening another.
