@@ -4,8 +4,7 @@
 // Creates WiFi network, hosts a webpage that displays this data
 
 
-// Libraries ---------------------------------------------------------------------------------------------------
-#include <Wire.h>
+// Libraries --------------------------------------------------------------------------------------
 #include <SPI.h>
 #include <WiFi101.h>
 char ssid[] = "DragRake";         // Network Name
@@ -77,10 +76,6 @@ String header;
 SPISettings sensors(14000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
 
 
-
-
-
-
 // Setup -------------------------------------------------------------------------------------------------------
 void setup()
 {
@@ -89,30 +84,29 @@ void setup()
   pinMode(s2Toggle, OUTPUT);
   pinMode(SDToggle, OUTPUT);
 
-  // Start I2C bus
-  // Wire.begin();
-
-  Serial.print("a");
+  Serial.begin(9600);
+  Serial.print("aaaaaaaaa"); // debug
   // Start WiFi network
   WiFi.setPins(8, 7, 4, 2);
-  Serial.begin(9600);
   Serial.print("Creating access point named: ");
   Serial.println(ssid);
-  Serial.print("a");
+  Serial.print("a"); // debug
   // Override the default IP address of 192.168.1.1
   WiFi.config(IPAddress(4, 20, 6, 9));
   status = WiFi.beginAP(ssid);
-  Serial.print("a");
+  Serial.print("a"); // debug 
   if (status != WL_AP_LISTENING) {
     Serial.println("Creating access point failed");
     // Don't continue if creating the WiFi network failed
     while (true);
   }
+
+  SPI.begin(); // used to come after requestCalib(), could make a difference?
   server.begin();
   printWiFiStatus();
   requestCalib();
-//  SPI.begin();
-  Serial.print("a");
+
+  Serial.print("a"); // debug 
 }
 
 // Loop --------------------------------------------------------------------------------------------------------
@@ -572,8 +566,6 @@ int  waitForDone(int tog)
 // Requests temperature and pressure data back from sensors
 float requestData(int tog)
 {
-  int sign;
-  float deltaV;
   int32_t iPraw;
   float pressure;
   int32_t iTemp;
@@ -628,14 +620,5 @@ float requestData(int tog)
   uiPCorrected = (uint32_t) (iPCorrected + 0x800000);
   pressure = ((float)12.5 * ((float)uiPCorrected / (float)pow(2, 23)));
   pressure = pressure - (float) 9.69;
-  if (pressure < 0)
-  {
-    sign = -1;
-    //Can't take sqrt of negative
-  } else {
-    sign = 1;
-  }
-  deltaV = sqrt((2 * (abs(pressure) * 249.089)) / (1.225)); //Pascals to meters per second
-  deltaV *= 1.943; //Metres per second to knots
-  return sign * deltaV;
+  return pressure;
 }
