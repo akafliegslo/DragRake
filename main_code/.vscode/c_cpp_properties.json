@@ -3,11 +3,9 @@
         {
             "name": "Mac",
             "includePath": [
-                "/Users/Bennett/Library/Arduino15/packages/adafruit/hardware/samd/1.5.10/**",
                 "/Users/Bennett/Library/Arduino15/packages/adafruit/hardware/samd/1.5.14/**"
             ],
             "forcedInclude": [
-                "/Users/Bennett/Library/Arduino15/packages/adafruit/hardware/samd/1.5.10/cores/arduino/Arduino.h",
                 "/Users/Bennett/Library/Arduino15/packages/adafruit/hardware/samd/1.5.14/cores/arduino/Arduino.h"
             ],
             "macFrameworkPath": [

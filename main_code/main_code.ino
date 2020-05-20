@@ -7,6 +7,7 @@
 // Libraries --------------------------------------------------------------------------------------
 #include <SPI.h>
 #include <WiFi101.h>
+#include <SD.h>
 char ssid[] = "DragRake";         // Network Name
 char pass[] = "";                 // Network password
 int keyIndex = 0;
@@ -14,17 +15,21 @@ int status = WL_IDLE_STATUS;
 // Variables ---------------------------------------------------------------------------------------
 
 // Command Registers (SPI commands for the pressure transducer)
-
 #define Start_Single 0xAA     // Hexadecimal address for single read
 #define Start_Average2 0xAC   // Hexadecimal address for average of 2 reads
 #define Start_Average4 0xAD   // Hexadecimal address for average of 4 reads
 #define Start_Average8 0xAE   // Hexadecimal address for average of 8 reads
 #define Start_Average16 0xAF  // Hexadecimal address for average of 16 reads
+
+// Initialing SPI chip select lines
 #define s1Toggle 11           // Pin used to toggle sensor 1
 #define s2Toggle 12           // Pin used to toggle sensor 2
-#define SDToggle 10           // Pin used for SD card slave select
+#define SD_card_CS 10           // Pin used for SD card slave select
+bool sen1 = HIGH;             // Initialize everything high 
+bool sen2 = HIGH;
+// bool chip = HIGH;
 
-// Array of all commands to simplify changing modes (i2c stuff)
+// Array of all commands to simplify changing modes (i2c stuff) CAN WE DELETE THIS?
 byte start_comm[5] =
 { Start_Single,
   Start_Average2,
@@ -55,11 +60,17 @@ byte highWord;
 byte words[20];
 float sensor1;
 float sensor2;
+float temp1;
+float temp2;
 
-// Required for Serial on Zero based boards
-#if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
-#define Serial SERIAL_PORT_USBVIRTUAL
-#endif
+// SD Card Variables
+String current_file = "data.txt"; // start with default name
+
+// might prevent serial output?
+// // Required for Serial on Zero based boards
+// #if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
+// #define Serial SERIAL_PORT_USBVIRTUAL
+// #endif
 
 // Needed for HTTP requests to work
 #define REQ_BUF_SZ   50
@@ -79,15 +90,20 @@ SPISettings sensors(14000000, MSBFIRST, SPI_MODE0); //Both sensors are logic sta
 // Setup -------------------------------------------------------------------------------------------------------
 void setup()
 {
+  WiFi.setPins(8, 7, 4, 2);
+
   // Set one sensor to active, the other to off
   pinMode(s1Toggle, OUTPUT);
   pinMode(s2Toggle, OUTPUT);
-  pinMode(SDToggle, OUTPUT);
+//  pinMode(SDToggle, OUTPUT);
 
   Serial.begin(9600);
   Serial.print("aaaaaaaaa"); // debug
+
+  SPI.begin(); // moved ahead of setting up wifi, makes a difference?
+  requestCalib();
+
   // Start WiFi network
-  WiFi.setPins(8, 7, 4, 2);
   Serial.print("Creating access point named: ");
   Serial.println(ssid);
   Serial.print("a"); // debug
@@ -101,10 +117,38 @@ void setup()
     while (true);
   }
 
-  SPI.begin(); // used to come after requestCalib(), could make a difference?
+
   server.begin();
   printWiFiStatus();
-  requestCalib();
+
+  // Initializing Sd card interface
+  SD.begin(SD_card_CS);
+  if (!SD.begin(SD_card_CS))
+  {
+    Serial.println("SD Card Failure");
+  //  while(1);
+  }
+
+  // Creating unique file name to avoid overwriting existing files
+  int i; // declare i for while loop
+  while (SD.exists(current_file)) // prevents overwriting data by generating a new file if one with the same name already exists
+  {
+    current_file = String("data" + String(i) + ".txt");
+    i++;
+  }
+
+  // Adding headers to data file
+  File dataFile = SD.open(current_file, FILE_WRITE);
+  String dataHeader = "Time (from starting)  Top Pressure  Bottom Pressure  Top Temp  Bottom Temp  Battery Voltage";
+
+  // if the file is available, write to it:
+  if (dataFile) {
+    dataFile.println(dataHeader);
+    dataFile.close();
+    // print to the serial port too:
+    Serial.println(dataHeader);
+  }
+
 
   Serial.print("a"); // debug 
 }
@@ -305,7 +349,6 @@ void loop()
             client.println("</body></html>");
             client.println(); // The HTTP response ends with another blank line
 
-
             /*
                The text[] and color[] arrays simply hold a string telling the buttons what color
                to have the background and text. This is so that I can easily set them all to the
@@ -321,7 +364,6 @@ void loop()
 
                What can I say, I was desperate.
             */
-
           }
 
           // finished with request, empty string
@@ -354,11 +396,11 @@ void takeMeasurements()
 {
   requestRead(1);
   waitForDone(1);
-  sensor1 = requestData(2);
+  sensor1 = requestData(1, &temp1);
   delay(1);
   requestRead(2);
   waitForDone(2);
-  sensor2 = requestData(2);
+  sensor2 = requestData(2, &temp2);
 }
 
 // Get calibration data from sensors (On startup)
@@ -402,10 +444,6 @@ void requestCalib()
   coeff[6] = (float)rawTempCoeff[2] / (float)0x7F;
 }
 
-// Toggles which sensor is active
-bool sen1 = HIGH;
-bool sen2 = HIGH;
-bool chip = HIGH;
 
 void toggle(int sensor)
 {
@@ -417,13 +455,14 @@ void toggle(int sensor)
   else if (sensor == 1)
   {
     digitalWrite(s1Toggle, !sen2);
-    sen1 = !sen2;
+    sen2 = !sen2;
   }
-  else
+/*  else
   {
     digitalWrite(SDToggle, !chip);
     chip = !chip;
   }
+  */
 }
 
 
@@ -436,6 +475,8 @@ void XML_response(WiFiClient cl)
   measuredvbat *= 2;    // we divided by 2, so multiply back
   measuredvbat *= 3.3;  // Multiply by 3.3V, our reference voltage
   measuredvbat /= 1024; // convert to voltage
+  SD_write(current_file); // Write values to SD Card
+
   cl.print("<?xml version = \"1.0\" ?>");
   cl.print("<inputs>");
   cl.print("<upper>");
@@ -557,14 +598,13 @@ int  waitForDone(int tog)
       lineReady = 1;
       break;
     }
-    else
-    {
+      else {
     }
   }
 }
 
 // Requests temperature and pressure data back from sensors
-float requestData(int tog)
+float requestData(int tog, float* temperature)
 {
   int32_t iPraw;
   float pressure;
@@ -572,7 +612,6 @@ float requestData(int tog)
   float AP3, BP2, CP, LCorr, PCorr, Padj, TCadj, TC50, Pnorm;
   int32_t Tdiff, Tref, iPCorrected;
   uint32_t uiPCorrected;
-
 
   // Get data from SPI lines
   SPI.beginTransaction(sensors);
@@ -606,19 +645,58 @@ float requestData(int tog)
   Tdiff = Tdiff / 0x7FFFFF;
 
   //TC50: Select High/Low, based on sensor temperature reading:
-  if (iTemp > Tref)
+  if (iTemp > Tref) {
     TC50 = (coeff[4] - 1);
-  else
+  }
+  else {
     TC50 = (coeff[5] - 1);
-  if (Pnorm > 0.5)
+  }
+  if (Pnorm > 0.5) {
     Padj = Pnorm - 0.5;
-  else
+  }
+  else {
     Padj = 0.5 - Pnorm;
+  }
+
+  // Calculating compensated pressure
   TCadj = (1.0 - (coeff[6] * 1.25 * Padj)) * Tdiff * TC50;
   PCorr = Pnorm + LCorr + TCadj; // corrected P: float, ±1.0
   iPCorrected = (int32_t)(PCorr * (float)0x7FFFFF); // corrected P: signed int32
   uiPCorrected = (uint32_t) (iPCorrected + 0x800000);
   pressure = ((float)12.5 * ((float)uiPCorrected / (float)pow(2, 23)));
   pressure = pressure - (float) 9.69;
+
+  // Calculating temperature (degrees Celcius)
+  *temperature = ((iTemp * 125)/pow(2,24)) - 40; // Celcius
+
   return pressure;
+}
+
+void SD_write(String current_file)
+{
+//  toggle(3); // Send SD CS low for write
+
+//  String dataString = ""; // might not be needed
+
+  // Creating Data String, see top for formatting
+  String dataString = String(millis() + "  " + String(sensor1) + "  " + String(sensor2) + 
+  "  " + String(temp1) + "  " + String(temp2) + "  " + String(measuredvbat));
+
+  // open the file. note that only one file can be open at a time,
+  // so you have to close this one before opening another.
+  File dataFile = SD.open(current_file, FILE_WRITE);
+
+  // if the file is available, write to it:
+  if (dataFile) {
+    dataFile.println(dataString);
+    dataFile.close();
+    // print to the serial port too:
+    Serial.println(dataString);
+  }
+  // if the file isn't open, pop up an error:
+  else {
+    Serial.println("error opening file");
+  }
+
+//  toggle(3); // Bring SD CS line back high for end of write
 }
