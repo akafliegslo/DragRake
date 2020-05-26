@@ -1,6 +1,6 @@
 // DRAGRAKE
-// Written by Danny Maas, Bennett Diamond and Christian BLoemhof
-// Collects pressure transducer data via i2c, processes data to make airspeed readings,
+// Written by Danny Maas and Bennett Diamond
+// Collects pressure transducer data to an SD card via SPI
 // Creates WiFi network, hosts a webpage that displays this data
 
 
@@ -8,10 +8,7 @@
 #include <SPI.h>
 #include <WiFi101.h>
 #include <SD.h>
-char ssid[] = "DragRake";         // Network Name
-char pass[] = "";                 // Network password
-int keyIndex = 0;
-int status = WL_IDLE_STATUS;
+
 // Variables ---------------------------------------------------------------------------------------
 
 // Command Registers (SPI commands for the pressure transducer)
@@ -24,12 +21,11 @@ int status = WL_IDLE_STATUS;
 // Initialing SPI chip select lines
 #define s1Toggle 11           // Pin used to toggle sensor 1
 #define s2Toggle 12           // Pin used to toggle sensor 2
-#define SD_card_CS 10           // Pin used for SD card slave select
+#define SD_card_CS 10         // Pin used for SD card slave select
 bool sen1 = HIGH;             // Initialize everything high 
 bool sen2 = HIGH;
-// bool chip = HIGH;
 
-// Array of all commands to simplify changing modes (i2c stuff) CAN WE DELETE THIS?
+// Array of all commands to simplify changing modes 
 byte start_comm[5] =
 { Start_Single,
   Start_Average2,
@@ -45,7 +41,7 @@ int cal_reg[11] = {47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57};
 // Variables and Arrays needed for website to work
 String text[6];
 String color[6];
-int selected;
+int selected = 1;
 
 // Variables used to measure battery voltage
 #define VBATPIN A7
@@ -66,11 +62,16 @@ float temp2;
 // SD Card Variables
 String current_file = "data.txt"; // start with default name
 
-// might prevent serial output?
-// // Required for Serial on Zero based boards
-// #if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
-// #define Serial SERIAL_PORT_USBVIRTUAL
-// #endif
+// Required for Serial on Zero based boards
+#if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
+  #define Serial SERIAL_PORT_USBVIRTUAL
+#endif
+
+// WiFi Network Variables
+char ssid[] = "DragRake";         // Network Name
+char pass[] = "";                 // Network password
+int keyIndex = 0;
+int status = WL_IDLE_STATUS;
 
 // Needed for HTTP requests to work
 #define REQ_BUF_SZ   50
@@ -86,47 +87,39 @@ String header;
 // SPI configurations
 SPISettings sensors(14000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
 
-
 // Setup -------------------------------------------------------------------------------------------------------
 void setup()
 {
-  WiFi.setPins(8, 7, 4, 2);
-
   // Set one sensor to active, the other to off
   pinMode(s1Toggle, OUTPUT);
   pinMode(s2Toggle, OUTPUT);
-//  pinMode(SDToggle, OUTPUT);
+  pinMode(SD_card_CS, OUTPUT);
 
+  WiFi.setPins(8, 7, 4, 2); // needed for ATWINC1500
   Serial.begin(9600);
-  Serial.print("aaaaaaaaa"); // debug
-
   SPI.begin(); // moved ahead of setting up wifi, makes a difference?
-  requestCalib();
+  requestCalib(); // requests calibration coefficients from sensor EEPROM
 
   // Start WiFi network
   Serial.print("Creating access point named: ");
   Serial.println(ssid);
-  Serial.print("a"); // debug
-  // Override the default IP address of 192.168.1.1
-  WiFi.config(IPAddress(4, 20, 6, 9));
+  WiFi.config(IPAddress(4, 20, 6, 9));   // Override the default IP address of 192.168.1.1
   status = WiFi.beginAP(ssid);
-  Serial.print("a"); // debug 
   if (status != WL_AP_LISTENING) {
     Serial.println("Creating access point failed");
     // Don't continue if creating the WiFi network failed
     while (true);
   }
 
-
-  server.begin();
+  server.begin(); // starts WiFi server
   printWiFiStatus();
+  WiFi.lowPowerMode(); // tries to keep power draw during operation to a minimum
 
   // Initializing Sd card interface
   SD.begin(SD_card_CS);
   if (!SD.begin(SD_card_CS))
   {
     Serial.println("SD Card Failure");
-  //  while(1);
   }
 
   // Creating unique file name to avoid overwriting existing files
@@ -148,24 +141,28 @@ void setup()
     // print to the serial port too:
     Serial.println(dataHeader);
   }
-
-
   Serial.print("a"); // debug 
 }
 
 // Loop --------------------------------------------------------------------------------------------------------
 void loop()
 {
+  recordData(); // records all the sensor data
+
   WiFiClient client = server.available();   // Listen for incoming clients
   if (client)
   {
+    Serial.print("I am in client if statement");
     boolean currentLineIsBlank = true;
     String currentLine = "";                // Make a String to hold incoming data from the client
     int i = 0;
     while (client.connected())
     {
+       recordData(); // records all the sensor data
+      Serial.print("I am in client connected while statement");
       if (client.available())
       {
+        Serial.print("I am in client available if statement");
         char c = client.read();             // Store the client data
 
         if (req_index < (REQ_BUF_SZ - 1)) {
@@ -391,6 +388,19 @@ void loop()
   } // end if (client)
 }
 
+// Functions ------------------------------------------------------------------------------------------
+
+// Takes all data independent of wifi in case client isn't connected
+void recordData()
+{
+  Serial.println("I take data now");
+  takeMeasurements();
+  measuredvbat = analogRead(VBATPIN);
+  measuredvbat *= 6.6;  // Multiply by 2 and 3.3V, our reference voltage
+  measuredvbat /= 1024; // convert to voltage
+  SD_write(current_file); // Write values to SD Card
+}
+
 // Reads data from both sensors and stores it in global variable
 void takeMeasurements()
 {
@@ -406,7 +416,7 @@ void takeMeasurements()
 // Get calibration data from sensors (On startup)
 void requestCalib()
 {
-  //Coefficients are the same from both sensors, so we only need them from one
+  // Coefficients are the same from both sensors, so we only need them from one
   int j = 0;
   for (byte i = 0x2F; i < 0x39; i++)
   {
@@ -457,26 +467,12 @@ void toggle(int sensor)
     digitalWrite(s1Toggle, !sen2);
     sen2 = !sen2;
   }
-/*  else
-  {
-    digitalWrite(SDToggle, !chip);
-    chip = !chip;
-  }
-  */
 }
 
 
 // send the XML file with switch statuses and analog value
 void XML_response(WiFiClient cl)
 {
-  int analog_val;
-  takeMeasurements();
-  float measuredvbat = analogRead(VBATPIN);
-  measuredvbat *= 2;    // we divided by 2, so multiply back
-  measuredvbat *= 3.3;  // Multiply by 3.3V, our reference voltage
-  measuredvbat /= 1024; // convert to voltage
-  SD_write(current_file); // Write values to SD Card
-
   cl.print("<?xml version = \"1.0\" ?>");
   cl.print("<inputs>");
   cl.print("<upper>");
@@ -528,7 +524,6 @@ char StrContains(char *str, char *sfind)
     }
     index++;
   }
-
   return 0;
 }
 
@@ -561,6 +556,7 @@ int requestRead(int tog)
   // If button is not set to "Off"
   if (selected > 0)
   {
+  Serial.println("Trying to request sensor data");
     uint32_t buff = ((start_comm[selected - 1] << 16) | (0x00 << 8) | 0x00);
     SPI.beginTransaction(sensors);
     toggle(tog);
@@ -612,7 +608,7 @@ float requestData(int tog, float* temperature)
   float AP3, BP2, CP, LCorr, PCorr, Padj, TCadj, TC50, Pnorm;
   int32_t Tdiff, Tref, iPCorrected;
   uint32_t uiPCorrected;
-
+  Serial.println("Trying to take sensor data");
   // Get data from SPI lines
   SPI.beginTransaction(sensors);
   toggle(tog);
@@ -674,16 +670,11 @@ float requestData(int tog, float* temperature)
 
 void SD_write(String current_file)
 {
-//  toggle(3); // Send SD CS low for write
-
-//  String dataString = ""; // might not be needed
-
-  // Creating Data String, see top for formatting
+  // Creating Data String, see comments at top of code for formatting
   String dataString = String(millis() + "  " + String(sensor1) + "  " + String(sensor2) + 
   "  " + String(temp1) + "  " + String(temp2) + "  " + String(measuredvbat));
 
-  // open the file. note that only one file can be open at a time,
-  // so you have to close this one before opening another.
+  // opening the file
   File dataFile = SD.open(current_file, FILE_WRITE);
 
   // if the file is available, write to it:
@@ -697,6 +688,4 @@ void SD_write(String current_file)
   else {
     Serial.println("error opening file");
   }
-
-//  toggle(3); // Bring SD CS line back high for end of write
 }
