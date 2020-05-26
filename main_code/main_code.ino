@@ -5,13 +5,11 @@
 
 
 // Libraries --------------------------------------------------------------------------------------
+#include <WiFi.h>
+#include <WebServer.h>
 #include <SPI.h>
-#include <WiFi101.h>
 #include <SD.h>
-char ssid[] = "DragRake";         // Network Name
-char pass[] = "";                 // Network password
-int keyIndex = 0;
-int status = WL_IDLE_STATUS;
+
 // Variables ---------------------------------------------------------------------------------------
 
 // Command Registers (SPI commands for the pressure transducer)
@@ -72,6 +70,13 @@ String current_file = "data.txt"; // start with default name
 // #define Serial SERIAL_PORT_USBVIRTUAL
 // #endif
 
+// WiFi Variables
+char ssid[] = "DragRake";         // Network Name
+char pass[] = "";                 // Network password
+int keyIndex = 0;
+int status = WL_IDLE_STATUS;
+IPAddress local_ip(4,20,6,9);
+
 // Needed for HTTP requests to work
 #define REQ_BUF_SZ   50
 char HTTP_req[REQ_BUF_SZ] = {0};    // buffered HTTP request stored as null terminated string
@@ -90,8 +95,6 @@ SPISettings sensors(14000000, MSBFIRST, SPI_MODE0); //Both sensors are logic sta
 // Setup -------------------------------------------------------------------------------------------------------
 void setup()
 {
-  WiFi.setPins(8, 7, 4, 2);
-
   // Set one sensor to active, the other to off
   pinMode(s1Toggle, OUTPUT);
   pinMode(s2Toggle, OUTPUT);
@@ -108,7 +111,7 @@ void setup()
   Serial.println(ssid);
   Serial.print("a"); // debug
   // Override the default IP address of 192.168.1.1
-  WiFi.config(IPAddress(4, 20, 6, 9));
+  WiFi.config(IP_address);
   status = WiFi.beginAP(ssid);
   Serial.print("a"); // debug 
   if (status != WL_AP_LISTENING) {
@@ -117,6 +120,18 @@ void setup()
     while (true);
   }
 
+  // Starting WiFi Network
+  WiFi.softAP(ssid);
+  WiFi.softAPConfig(local_ip);
+
+  // Setting Webpage modes
+  server.on("/", handle_read(0));
+  server.on("/read1", handle_read(1));
+  server.on("/read2avg", handle_read(2));
+  server.on("/read4avg", handle_read(4));
+  server.on("/read8avg", handle_read(8));
+  server.on("/read16avg", handle_read(16));
+  server.onNotFound(handle_NotFound);
 
   server.begin();
   printWiFiStatus();
@@ -156,105 +171,9 @@ void setup()
 // Loop --------------------------------------------------------------------------------------------------------
 void loop()
 {
-  WiFiClient client = server.available();   // Listen for incoming clients
-  if (client)
-  {
-    boolean currentLineIsBlank = true;
-    String currentLine = "";                // Make a String to hold incoming data from the client
-    int i = 0;
-    while (client.connected())
-    {
-      if (client.available())
-      {
-        char c = client.read();             // Store the client data
-
-        if (req_index < (REQ_BUF_SZ - 1)) {
-          HTTP_req[req_index] = c;          // Save HTTP request character
-          req_index++;
-        }
-        if ((72 < i) && (i < 75))           // The data we are looking for (from the buttons) is at characters 73 - 74
-          // We get back the length of the string from each button. This string length
-          // Is different for each button, so by reading this length we can figure out which
-          // Button was pressed. This allows button processing to be greatly sped up
-        {
-          // Serial.println(c); //Debugging purposes
-
-          // This loop processes the data from the client request, and changes the variable "selected," which displays which
-          // button has been pressed, as well as changes the averaging type
-          char q[2];
-          q[i - 73] = c;
-          if (q[0] == '1')
-          {
-            if (i == 74)
-            {
-              if (q[1] == '0')
-              {
-                selected = 3;
-                Serial.println("4 AVG");
-              }
-              if (q[1] == '1')
-              {
-                selected = 4;
-                Serial.println("8 AVG");
-              }
-              if (q[1] == '2')
-              {
-                selected = 5;
-                Serial.println("16 AVG");
-              }
-              else
-              {
-              }
-            }
-            else
-            {
-            }
-          }
-          else if (i == 73)
-          {
-            if (q[0] == '5')
-            {
-              selected = 0;
-              Serial.println("Off");
-            }
-            else if (q[0] == '8')
-            {
-              selected = 1;
-              Serial.println("Single");
-            }
-            else if (q[0] == '9')
-            {
-              selected = 2;
-              Serial.println("2 AVG");
-            }
-          }
-          else
-          {
-          }
-        }
-        else
-        {
-        }
-        // End of button processing code (probably could be done much more efficiently
-
-        i++;
-        if (c == '\n' && currentLineIsBlank) {
-          // send a standard http response header
-          client.println("HTTP/1.1 200 OK");
-          if (StrContains(HTTP_req, "ajax_inputs")) {
-            // send rest of HTTP header
-            client.println("Content-Type: text/xml");
-            client.println("Connection: keep-alive");
-            client.println();
-            // send XML file containing input states
-            XML_response(client);
-          }
-          else {
-            client.println("Content-Type: text/html");
-            client.println("Connection: keep-alive");
-            client.println();
-
-            //            selected = 1;
+  record_Data();
+  
+  server.handleClient();
 
             //Set all the clickable buttons to be gray
             for (int i = 0; i < 6; i++)
@@ -349,47 +268,8 @@ void loop()
             client.println("</body></html>");
             client.println(); // The HTTP response ends with another blank line
 
-            /*
-               The text[] and color[] arrays simply hold a string telling the buttons what color
-               to have the background and text. This is so that I can easily set them all to the
-               same color, then only set one of them to be highlighted.
 
-               Now would be a good time to explain what all this stuff is (specifically the form).
-               The arduino receives a response from the computer each time a button is pressed,
-               in the form of name=value. So, for "Off", this would be "1=Off" which is 5 characters long.
-               I couldn't get the Arduino to tell me what the actual message was (I was planning to
-               parse the message to see if it was "Off" "Single" etc), but it will tell me the length
-               of the message. So, I made all the buttons send back a different length message so that
-               I can tell which one is being pressed.
-
-               What can I say, I was desperate.
-            */
-          }
-
-          // finished with request, empty string
-          req_index = 0;
-          StrClear(HTTP_req, REQ_BUF_SZ);
-          break;
-        }
-
-        // every line of text received from the client ends with \r\n
-        if (c == '\n') {
-
-          // last character on line of received text
-          // starting new line with next character read
-          currentLineIsBlank = true;
-        }
-        else if (c != '\r') {
-
-          // a text character was received from client
-          currentLineIsBlank = false;
-        }
-      } // end if (client.available())
-    } // end while (client.connected())
-    delay(1);      // give the web browser time to receive the data
-    client.stop(); // close the connection
-  } // end if (client)
-}
+// Functions -------------------------------------------------------------------------------------------
 
 // Reads data from both sensors and stores it in global variable
 void takeMeasurements()
@@ -465,6 +345,69 @@ void toggle(int sensor)
   */
 }
 
+void handle_read(int mode) 
+{
+  switch (mode)
+  {
+    case 0:
+    Serial.println("Not reading sensors"); 
+
+    case 1:
+    Serial.println("Single sensor read"); 
+
+    case 2:
+    Serial.println("Average of 2 sensor reads"); 
+
+    case 4:
+    Serial.println("Average of 4 sensor reads"); 
+
+    case 8:
+    Serial.println("Average of 8 sensor reads"); 
+
+    case 16:
+    Serial.println("Average of 16 sensor reads"); 
+  }
+
+  server.send(200, "text/html", SendHTML(mode)); 
+}
+
+String SendHTML(uint8_t led1stat,uint8_t led2stat)
+{
+  String ptr = "<!DOCTYPE html> <html>\n";
+  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+  ptr +="<title>Drag Rake</title>\n";
+  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}\n";
+  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";
+  ptr +=".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n";
+  ptr +=".button-on {background-color: #3498db;}\n";
+  ptr +=".button-on:active {background-color: #2980b9;}\n";
+  ptr +=".button-off {background-color: #34495e;}\n";
+  ptr +=".button-off:active {background-color: #2c3e50;}\n";
+  ptr +="p {font-size: 14px;color: #888;margin-bottom: 10px;}\n";
+  ptr +="</style>\n";
+  ptr +="</head>\n";
+  ptr +="<body>\n";
+  ptr +="<h1>Drag Rake</h1>\n";
+  ptr +="<h3>Akaflieg SLO ESP32 Proto-build</h3>\n";
+  
+  switch (mode)
+  {
+
+  }
+   if(led1stat)
+  {ptr +="<p>LED1 Status: ON</p><a class=\"button button-off\" href=\"/led1off\">OFF</a>\n";}
+  else
+  {ptr +="<p>LED1 Status: OFF</p><a class=\"button button-on\" href=\"/led1on\">ON</a>\n";}
+
+  if(led2stat)
+  {ptr +="<p>LED2 Status: ON</p><a class=\"button button-off\" href=\"/led2off\">OFF</a>\n";}
+  else
+  {ptr +="<p>LED2 Status: OFF</p><a class=\"button button-on\" href=\"/led2on\">ON</a>\n";}
+
+  ptr +="</body>\n";
+  ptr +="</html>\n";
+  return ptr;
+}
 
 // send the XML file with switch statuses and analog value
 void XML_response(WiFiClient cl)
