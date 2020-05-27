@@ -9,6 +9,7 @@
 #include <WebServer.h>
 #include <SPI.h>
 #include <SD.h>
+#include "FS.h"
 
 // Variables ---------------------------------------------------------------------------------------
 
@@ -22,12 +23,11 @@
 // Initialing SPI chip select lines
 #define s1Toggle 11           // Pin used to toggle sensor 1
 #define s2Toggle 12           // Pin used to toggle sensor 2
-#define SD_card_CS 10           // Pin used for SD card slave select
+#define SD_card_CS 10         // Pin used for SD card slave select
 bool sen1 = HIGH;             // Initialize everything high 
 bool sen2 = HIGH;
-// bool chip = HIGH;
 
-// Array of all commands to simplify changing modes (i2c stuff) CAN WE DELETE THIS?
+// Array of all commands to simplify changing modes (SPI stuff)
 byte start_comm[5] =
 { Start_Single,
   Start_Average2,
@@ -39,11 +39,6 @@ int st_mode = 1;              // Command mode selector
 
 // Array of calibration registers
 int cal_reg[11] = {47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57};
-
-// Variables and Arrays needed for website to work
-String text[6];
-String color[6];
-int selected;
 
 // Variables used to measure battery voltage
 #define VBATPIN A7
@@ -62,35 +57,22 @@ float temp1;
 float temp2;
 
 // SD Card Variables
-String current_file = "data.txt"; // start with default name
-
-// might prevent serial output?
-// // Required for Serial on Zero based boards
-// #if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
-// #define Serial SERIAL_PORT_USBVIRTUAL
-// #endif
+String current_file = "/data.txt"; // start with default name
 
 // WiFi Variables
 char ssid[] = "DragRake";         // Network Name
 char pass[] = "";                 // Network password
-int keyIndex = 0;
+
 int status = WL_IDLE_STATUS;
 IPAddress local_ip(4,20,6,9);
-
-// Needed for HTTP requests to work
-#define REQ_BUF_SZ   50
-char HTTP_req[REQ_BUF_SZ] = {0};    // buffered HTTP request stored as null terminated string
-char req_index = 0;                 // index into HTTP_req buffer
+IPAddress gateway(192,168,1,1);
+IPAddress subnet(255,255,255,0);
 
 // Set web server port number to 80 (Change if needed)
-WiFiServer server(80);
-
-// Variable to store the HTTP request
-String header;
+WebServer server(80);
 
 // SPI configurations
 SPISettings sensors(14000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
-
 
 // Setup -------------------------------------------------------------------------------------------------------
 void setup()
@@ -98,43 +80,27 @@ void setup()
   // Set one sensor to active, the other to off
   pinMode(s1Toggle, OUTPUT);
   pinMode(s2Toggle, OUTPUT);
-//  pinMode(SDToggle, OUTPUT);
 
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.print("aaaaaaaaa"); // debug
 
   SPI.begin(); // moved ahead of setting up wifi, makes a difference?
   requestCalib();
 
-  // Start WiFi network
-  Serial.print("Creating access point named: ");
-  Serial.println(ssid);
-  Serial.print("a"); // debug
-  // Override the default IP address of 192.168.1.1
-  WiFi.config(IP_address);
-  status = WiFi.beginAP(ssid);
-  Serial.print("a"); // debug 
-  if (status != WL_AP_LISTENING) {
-    Serial.println("Creating access point failed");
-    // Don't continue if creating the WiFi network failed
-    while (true);
-  }
-
   // Starting WiFi Network
   WiFi.softAP(ssid);
-  WiFi.softAPConfig(local_ip);
+  WiFi.softAPConfig(local_ip, gateway, subnet);
 
   // Setting Webpage modes
   server.on("/", handle_read(0));
   server.on("/read1", handle_read(1));
-  server.on("/read2avg", handle_read(2));
-  server.on("/read4avg", handle_read(4));
-  server.on("/read8avg", handle_read(8));
-  server.on("/read16avg", handle_read(16));
+  server.on("/read2", handle_read(2));
+  server.on("/read4", handle_read(4));
+  server.on("/read8", handle_read(8));
+  server.on("/read16", handle_read(16));
   server.onNotFound(handle_NotFound);
 
   server.begin();
-  printWiFiStatus();
 
   // Initializing Sd card interface
   SD.begin(SD_card_CS);
@@ -146,128 +112,35 @@ void setup()
 
   // Creating unique file name to avoid overwriting existing files
   int i; // declare i for while loop
-  while (SD.exists(current_file)) // prevents overwriting data by generating a new file if one with the same name already exists
+  File dataFile = SD.open(current_file);
+  
+  while (dataFile // prevents overwriting data by generating a new file if one with the same name already exists
   {
-    current_file = String("data" + String(i) + ".txt");
+    current_file = String("/data" + String(i) + ".txt");
     i++;
+    dataFile = SD.open(current_file);
   }
 
-  // Adding headers to data file
-  File dataFile = SD.open(current_file, FILE_WRITE);
-  String dataHeader = "Time (from starting)  Top Pressure  Bottom Pressure  Top Temp  Bottom Temp  Battery Voltage";
+  String dataHeader = "Time (from starting)  Top Pressure  Bottom Pressure  Top Temp  Bottom Temp  Battery Voltage \r\n";
+  writeFile(SD, current_file, dataHeader); // write headers to file
 
-  // if the file is available, write to it:
-  if (dataFile) {
-    dataFile.println(dataHeader);
-    dataFile.close();
-    // print to the serial port too:
-    Serial.println(dataHeader);
-  }
+  dataFile.close(); // finish file
 
-
-  Serial.print("a"); // debug 
 }
 
 // Loop --------------------------------------------------------------------------------------------------------
 void loop()
 {
-  record_Data();
+  // Taking and recording data
+  Serial.println("I take data now");
+  takeMeasurements();
+  measuredvbat = analogRead(VBATPIN);
+  measuredvbat *= 6.6;  // Multiply by 2 and 3.3V, our reference voltage
+  measuredvbat /= 1024; // convert to voltage
+  SD_write(current_file); // Write values to SD Card 
   
+  // Webpage stuff
   server.handleClient();
-
-            //Set all the clickable buttons to be gray
-            for (int i = 0; i < 6; i++)
-            {
-              text[i] = "black";
-              color[i] = "ddd}";
-            }
-            //Set ONLY the selected button to be blue
-            text[selected] = "white";
-            color[selected] = "2196F3}";
-
-            client.println("<!DOCTYPE html><html><head>");
-            client.println("<title>Drag Rake Controls</title>");
-
-            //Script for getting and processing the Arduino data
-            client.println("<script>");
-            client.println("function GetSwitchState() {");
-            client.println("nocache = \"&nocache=\"+ Math.random() * 1000000;");
-            client.println("var request = new XMLHttpRequest();");
-            client.println("request.onreadystatechange = function() {");
-            client.println("if (this.readyState == 4) {");
-            client.println("if (this.status == 200) {");
-            client.println("if (this.responseXML != null) {");
-            client.println("document.getElementById(\"Upper\").value =this.responseXML.getElementsByTagName('upper')[0].childNodes[0].nodeValue;");
-            client.println("document.getElementById(\"Lower\").value =this.responseXML.getElementsByTagName('lower')[0].childNodes[0].nodeValue;");
-            client.println("document.getElementById(\"Average\").value =this.responseXML.getElementsByTagName('average')[0].childNodes[0].nodeValue;");
-            client.println("document.getElementById(\"Battery\").value =this.responseXML.getElementsByTagName('battery')[0].childNodes[0].nodeValue;");
-            client.println("}}}}");
-            client.println("request.open(\"GET\", \"ajax_inputs\" + nocache, true);");
-            client.println("request.send(null);");
-            client.println("setTimeout('GetSwitchState()', 100);"); //EDIT THIS FOR POLLING SPEED
-            client.println("}");
-            client.println("</script>");
-            //End Script
-
-            //Attempt at Scaling
-            client.println("<meta name = \"viewport\" content = \"width = device - width, initial - scale = 1\">");
-            client.println("<style>");
-
-            //Set header properties (to get proper spacing):
-            client.println("h1{line-height:64px;font-size: 32px;margin:0px;padding:0px;}");
-            client.println("h2{line-height:0px;font-size: 32px;margin:0px;padding:0px;}");
-
-            //Button properties for the data readouts:
-            client.println(".read {border: 2px solid black;margin: 12px 8px;background-color: white;color: black;");
-            client.println("height: 64px;width: 128px;font-size: 32px;cursor: pointer;text-align: center;}");
-
-            //Create each data button (non-clickable):
-            client.println(".upp {border-color: #000000;color: black;}");
-            client.println(".low {border-color: #000000;color: black;}");
-            client.println(".avg {border-color: #000000;color: black;}");
-            client.println(".batt {border-color: #000000;color: black;}");
-
-            //Button properties for the clickable buttons :
-            client.println(".btn {border: none;color: black;width: 128px; height: 64px;text - align: center;");
-            client.println("font - size: 32px;margin: 4px 2px;border - radius: 20px;}");
-
-            //Create each clickable button:
-            client.println(".off {color:" + text[0] + ";background-color: #" + color[0]);
-            client.println(".single {color:" + text[1] + ";background-color: #" + color[1]);
-            client.println(".avg2 {color:" + text[2] + ";background-color: #" + color[2]);
-            client.println(".avg4 {color:" + text[3] + ";background-color: #" + color[3]);
-            client.println(".avg8 {color:" + text[4] + ";background-color: #" + color[4]);
-            client.println(".avg16{color:" + text[5] + ";background-color: #" + color[5]);
-            client.println("</style></head>");
-
-            //Body of code:
-            client.println("<body onload=\"GetSwitchState()\">");
-
-            //Data Division:
-            client.println("<div>");
-            client.println("<h1>Akaflieg SLO Drag Rake</h1>");
-            client.println("<h2><input class=\"read upp\" id=\"Upper\" value=\"0\"/>Upper Surface &Delta;V (kts)</h2>");
-            client.println("<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;V (kts)</h2>");
-            client.println("<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;V (kts)</h2>");
-            client.println("<h2><input class=\"read batt\"id=\"Battery\" value=\"0\"/>Battery Remaining (%)</h2>");
-            client.println("</div>");
-
-            //Form Division:
-            client.println("<div>");
-            client.println("<h1>Sensor Reader Mode</h1>");
-            client.println("<form method = \"post\">");
-            client.println("<input class = \"btn off\" type = \"submit\" name = \"1\" id=\"Off\" value = \"Off\" onclick = \"submit()\">");
-            client.println("<input class = \"btn single\" type = \"submit\" name = \"1\" id=\"Single\" value = \"Single\" onclick = \"submit()\">");
-            client.println("<input class = \"btn avg2\" type = \"submit\" name = \"123\" id=\"2 AVG\" value = \"2 AVG\" onclick = \"submit()\">");
-            client.println("<br>");
-            client.println("<input class = \"btn avg4\" type = \"submit\" name = \"1234\" id=\"4 AVG\" value = \"4 AVG\" onclick = \"submit()\">");
-            client.println("<input class = \"btn avg8\" type = \"submit\" name = \"13245\" id=\"8 AVG\" value = \"8 AVG\" onclick = \"submit()\">");
-            client.println("<input class = \"btn avg16\" type = \"submit\" name = \"12345\" id=\"16 AVG\" value = \"16 AVG\" onclick = \"submit()\">");
-            client.println("</form>");
-            client.println("</div>");
-            client.println("</body></html>");
-            client.println(); // The HTTP response ends with another blank line
-
 
 // Functions -------------------------------------------------------------------------------------------
 
@@ -324,7 +197,6 @@ void requestCalib()
   coeff[6] = (float)rawTempCoeff[2] / (float)0x7F;
 }
 
-
 void toggle(int sensor)
 {
   if (sensor == 2)
@@ -337,167 +209,7 @@ void toggle(int sensor)
     digitalWrite(s1Toggle, !sen2);
     sen2 = !sen2;
   }
-/*  else
-  {
-    digitalWrite(SDToggle, !chip);
-    chip = !chip;
-  }
-  */
 }
-
-void handle_read(int mode) 
-{
-  switch (mode)
-  {
-    case 0:
-    Serial.println("Not reading sensors"); 
-
-    case 1:
-    Serial.println("Single sensor read"); 
-
-    case 2:
-    Serial.println("Average of 2 sensor reads"); 
-
-    case 4:
-    Serial.println("Average of 4 sensor reads"); 
-
-    case 8:
-    Serial.println("Average of 8 sensor reads"); 
-
-    case 16:
-    Serial.println("Average of 16 sensor reads"); 
-  }
-
-  server.send(200, "text/html", SendHTML(mode)); 
-}
-
-String SendHTML(uint8_t led1stat,uint8_t led2stat)
-{
-  String ptr = "<!DOCTYPE html> <html>\n";
-  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
-  ptr +="<title>Drag Rake</title>\n";
-  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}\n";
-  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";
-  ptr +=".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n";
-  ptr +=".button-on {background-color: #3498db;}\n";
-  ptr +=".button-on:active {background-color: #2980b9;}\n";
-  ptr +=".button-off {background-color: #34495e;}\n";
-  ptr +=".button-off:active {background-color: #2c3e50;}\n";
-  ptr +="p {font-size: 14px;color: #888;margin-bottom: 10px;}\n";
-  ptr +="</style>\n";
-  ptr +="</head>\n";
-  ptr +="<body>\n";
-  ptr +="<h1>Drag Rake</h1>\n";
-  ptr +="<h3>Akaflieg SLO ESP32 Proto-build</h3>\n";
-  
-  switch (mode)
-  {
-
-  }
-   if(led1stat)
-  {ptr +="<p>LED1 Status: ON</p><a class=\"button button-off\" href=\"/led1off\">OFF</a>\n";}
-  else
-  {ptr +="<p>LED1 Status: OFF</p><a class=\"button button-on\" href=\"/led1on\">ON</a>\n";}
-
-  if(led2stat)
-  {ptr +="<p>LED2 Status: ON</p><a class=\"button button-off\" href=\"/led2off\">OFF</a>\n";}
-  else
-  {ptr +="<p>LED2 Status: OFF</p><a class=\"button button-on\" href=\"/led2on\">ON</a>\n";}
-
-  ptr +="</body>\n";
-  ptr +="</html>\n";
-  return ptr;
-}
-
-// send the XML file with switch statuses and analog value
-void XML_response(WiFiClient cl)
-{
-  int analog_val;
-  takeMeasurements();
-  float measuredvbat = analogRead(VBATPIN);
-  measuredvbat *= 2;    // we divided by 2, so multiply back
-  measuredvbat *= 3.3;  // Multiply by 3.3V, our reference voltage
-  measuredvbat /= 1024; // convert to voltage
-  SD_write(current_file); // Write values to SD Card
-
-  cl.print("<?xml version = \"1.0\" ?>");
-  cl.print("<inputs>");
-  cl.print("<upper>");
-  cl.print(sensor1);
-  cl.print("</upper>");
-  cl.print("<lower>");
-  cl.print(sensor2);
-  cl.print("</lower>");
-  cl.print("<average>");
-  cl.print((sensor1 + sensor2) / (float)2);
-  cl.print("</average>");
-  cl.print("<battery>");
-  cl.print(measuredvbat);
-  cl.print("</battery>");
-  cl.print("</inputs>");
-}
-
-// sets every element of str to 0 (clears array)
-void StrClear(char *str, char length)
-{
-  for (int i = 0; i < length; i++) {
-    str[i] = 0;
-  }
-}
-
-// searches for the string sfind in the string str
-// returns 1 if string found
-// returns 0 if string not found
-char StrContains(char *str, char *sfind)
-{
-  char found = 0;
-  char index = 0;
-  char len;
-
-  len = strlen(str);
-
-  if (strlen(sfind) > len) {
-    return 0;
-  }
-  while (index < len) {
-    if (str[index] == sfind[found]) {
-      found++;
-      if (strlen(sfind) == found) {
-        return 1;
-      }
-    }
-    else {
-      found = 0;
-    }
-    index++;
-  }
-
-  return 0;
-}
-
-// Prints wifi status to serial port
-void printWiFiStatus() {
-
-  // print the SSID of the network you're attached to:
-  Serial.print("SSID: ");
-  Serial.println(WiFi.SSID());
-
-  // print your WiFi shield's IP address:
-  IPAddress ip = WiFi.localIP();
-  Serial.print("IP Address: ");
-  Serial.println(ip);
-
-  // print the received signal strength:
-  long rssi = WiFi.RSSI();
-  Serial.print("signal strength (RSSI):");
-  Serial.print(rssi);
-  Serial.println(" dBm");
-
-  // print where to go in a browser:
-  Serial.print("To see this page in action, open a browser to http://");
-  Serial.println(ip);
-}
-
 // Starts read of pressure and temperature data
 int requestRead(int tog)
 {
@@ -615,31 +327,191 @@ float requestData(int tog, float* temperature)
   return pressure;
 }
 
+void handle_read(int mode) 
+{
+  if (mode == 0)
+  {
+    Serial.println("Not readings sensors");
+  } 
+  else if (mode == 1)
+  {
+    Serial.println("Single sensor read");     
+  } 
+  else 
+  {
+    Serial.println("Average of " + String(mode) + " readings")
+  }
+  server.send(200, "text/html", SendHTML(mode)); 
+}
+
+void handle_NotFound(){
+  server.send(404, "text/plain", "Not found");
+}
+
+String SendHTML(u_int8_t mode)
+{
+  //HTML Setup Stuff
+  String ptr = "<!DOCTYPE html> <html>\n";
+  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+  ptr +="<title>Drag Rake Controls</title>\n";
+  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}\n";
+  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";
+  
+  // Button Characteristics
+  ptr +=".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;";
+  ptr +="text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n";
+  ptr +=".button-on {background-color: #3498db;}\n";
+  ptr +=".button-on:active {background-color: #2980b9;}\n";
+  ptr +=".button-off {background-color: #34495e;}\n";
+  ptr +=".button-off:active {background-color: #2c3e50;}\n";
+  ptr +="p {font-size: 14px;color: #888;margin-bottom: 10px;}\n";
+
+  // Data Readout Characteristics
+  ptr +=".read {display: block; height: 64 px; width: 128px; background-color: #FFFFFF; ";
+  ptr +="color: white; padding: 13px 30px; font-size: 32px; margin: 0px auto 35px; cursor: pointer; border-radius: 4px;}\n";
+  
+  //Create each data button (non-clickable): MIGHT NOT BE NEEDED
+  ptr +=".upp {border-color: #000000;color: black;}";
+  ptr +=".low {border-color: #000000;color: black;}";
+  ptr +=".avg {border-color: #000000;color: black;}";
+  ptr +=".batt {border-color: #000000;color: black;}";  
+  
+  // Data Input
+  ptr +="<inputs><upper>";
+  ptr += String(sensor1);
+  ptr +="</upper>";
+  ptr +="<lower>";
+  ptr += String(sensor2);
+  ptr +="</lower>";
+  ptr +="<average>";
+  ptr += String((sensor1 + sensor2) / (float)2);
+  ptr +="</average>";
+  ptr +="<battery>";
+  ptr +=String(measuredvbat);
+  ptr +="</battery>";
+  ptr +="</inputs>";
+
+  ptr +="</style>\n";
+  ptr +="</head>\n";
+  ptr +="<body>\n";
+
+  // Title
+  ptr +="<h1>Drag Rake</h1>\n";
+  ptr +="<h3>Akaflieg SLO ESP32 Proto-build</h3>\n";
+  ptr +="<!-- EASTER EGG -->";
+
+  // Data displays
+  ptr +=("<h2><input class=\"read upp\" id=\"Upper\" value=\"0\"/>Upper Surface &Delta;Pressure (Pa)</h2>";
+  ptr +="<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;Pressure (Pa)</h2>";
+  ptr +="<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;Pressure (Pa)</h2>";
+  ptr +="<h2><input class=\"read batt\"id=\"Battery\" value=\"0\"/>Battery Remaining (%)</h2>";
+
+  // Buttons
+  ptr +="<h3>Sensor Read Modes</h3>\n";
+  switch (mode)
+  {
+    case 0:
+    ptr +="<a class=\"button button-off\" href=\"/\">OFF</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read1\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read2\">ON</a>\n";
+    ptr +="<a class=\"button button-on\" href=\"/read4\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read8\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read16\">ON</a>\n";
+    break;
+
+    case 1:
+    ptr +="<a class=\"button button-on\" href=\"/\">ON</a>";
+    ptr +="<a class=\"button button-off\" href=\"/read1\">OFF</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read2\">ON</a>\n";
+    ptr +="<a class=\"button button-on\" href=\"/read4\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read8\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read16\">ON</a>\n";
+    break;
+
+    case 2:
+    ptr +="<a class=\"button button-on\" href=\"/\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read1\">ON</a>";
+    ptr +="<a class=\"button button-off\" href=\"/read2\">OFF</a>\n";
+    ptr +="<a class=\"button button-on\" href=\"/read4\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read8\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read16\">ON</a>\n";
+    break;
+
+    case 4:
+    ptr +="<a class=\"button button-on\" href=\"/\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read1\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read2\">ON</a>\n";
+    ptr +="<a class=\"button button-off\" href=\"/read4\">OFF</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read8\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read16\">ON</a>\n";
+    break;
+
+    case 8:
+    ptr +="<a class=\"button button-on\" href=\"/\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read1\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read2\">ON</a>\n";
+    ptr +="<a class=\"button button-on\" href=\"/read4\">ON</a>";
+    ptr +="<a class=\"button button-off\" href=\"/read8\">OFF</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read16\">ON</a>\n";
+    break;
+
+    case 16:
+    ptr +="<a class=\"button button-on\" href=\"/\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read1\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read2\">ON</a>\n";
+    ptr +="<a class=\"button button-on\" href=\"/read4\">ON</a>";
+    ptr +="<a class=\"button button-on\" href=\"/read8\">ON</a>";
+    ptr +="<a class=\"button button-off\" href=\"/read16\">OFF</a>\n";
+    break;
+  }
+
+  ptr +="</body>\n";
+  ptr +="</html>\n";
+  return ptr; 
+}
+
 void SD_write(String current_file)
 {
-//  toggle(3); // Send SD CS low for write
-
-//  String dataString = ""; // might not be needed
-
   // Creating Data String, see top for formatting
-  String dataString = String(millis() + "  " + String(sensor1) + "  " + String(sensor2) + 
-  "  " + String(temp1) + "  " + String(temp2) + "  " + String(measuredvbat));
+  String dataString = String(millis()) + "  " + String(sensor1) + "  " + String(sensor2) + 
+  "  " + String(temp1) + "  " + String(temp2) + "  " + String(measuredvbat) + "\r\n";
 
-  // open the file. note that only one file can be open at a time,
-  // so you have to close this one before opening another.
-  File dataFile = SD.open(current_file, FILE_WRITE);
+  // open and apend data to the file
+  appendFile(SD, current_file, dataString.c_str());
+}
 
-  // if the file is available, write to it:
-  if (dataFile) {
-    dataFile.println(dataString);
-    dataFile.close();
-    // print to the serial port too:
-    Serial.println(dataString);
+// Weird ESP32 SD card functions (DON'T TOUCH THESE) -----------------------------------------------
+
+// Write to the SD card (DON'T MODIFY THIS FUNCTION)
+void writeFile(fs::FS &fs, const char * path, const char * message) {
+  Serial.printf("Writing file: %s\n", path);
+
+  File file = fs.open(path, FILE_WRITE);
+  if(!file) {
+    Serial.println("Failed to open file for writing");
+    return;
   }
-  // if the file isn't open, pop up an error:
-  else {
-    Serial.println("error opening file");
+  if(file.print(message)) {
+    Serial.println("File written");
+  } else {
+    Serial.println("Write failed");
   }
+  file.close();
+}
 
-//  toggle(3); // Bring SD CS line back high for end of write
+// Append data to the SD card (DON'T MODIFY THIS FUNCTION)
+void appendFile(fs::FS &fs, const char * path, const char * message) {
+  Serial.printf("Appending to file: %s\n", path);
+
+  File file = fs.open(path, FILE_APPEND);
+  if(!file) {
+    Serial.println("Failed to open file for appending");
+    return;
+  }
+  if(file.print(message)) {
+    Serial.println("Message appended");
+  } else {
+    Serial.println("Append failed");
+  }
+  file.close();
 }
