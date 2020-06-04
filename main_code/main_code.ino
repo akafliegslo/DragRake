@@ -216,13 +216,19 @@ int requestRead(int tog)
   // If button is not set to "Off"
   if (selected > 0)
   {
-    uint32_t buff = ((start_comm[selected - 1] << 16) | (0x00 << 8) | 0x00);
+    uint8_t buff1 = start_comm[selected - 1] << 16; // WHY IS THIS ONE 16 BITS??
+    uint8_t buff2 = 0x00 << 8; 
+    uint8_t buff3 = 0x00;
     SPI.beginTransaction(sensors);
     toggle(tog);
-    SPI.transfer(&buff, 3);
+    SPI.transfer(&buff1); // ESP32 SPI doesn't support multiple byte transfer
+    SPI.transfer(&buff2); // WHY ARE THESE POINTERS?
+    SPI.transfer(&buff3);
     //Arduino transmits measurement start command, will receive back status byte and two bytes of "undefined data"
     toggle(tog);
     SPI.endTransaction();
+
+    uint8_t buff = (buff1 | buff2 | buff3); // concatenating bytes
   }
   else
   {
@@ -348,7 +354,7 @@ void handle_NotFound(){
   server.send(404, "text/plain", "Not found");
 }
 
-String SendHTML(u_int8_t mode)
+String SendHTML(int mode)
 {
   //HTML Setup Stuff
   String ptr = "<!DOCTYPE html> <html>\n";
@@ -402,7 +408,9 @@ String SendHTML(u_int8_t mode)
 
   // Data displays
   ptr +=("<h2><input class=\"read upp\" id=\"Upper\" value=\"0\"/>Upper Surface &Delta;Pressure (Pa)</h2>";
-  ptr +="<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;Pressure (Pa)</h2>";
+  ptr +="<h2><input class=\"read low\" id=\"Lower\" value="
+  ptr +=String(sensor2); // atempting to see if this works
+  ptr +="/>Lower Surface &Delta;Pressure (Pa)</h2>";
   ptr +="<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;Pressure (Pa)</h2>";
   ptr +="<h2><input class=\"read batt\"id=\"Battery\" value=\"0\"/>Battery Remaining (%)</h2>";
 
