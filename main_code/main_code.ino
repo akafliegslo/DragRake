@@ -31,14 +31,6 @@ byte start_comm[5] =
      Start_Average4,
      Start_Average8,
      Start_Average16};
-int st_mode = 1; // Command mode selector
-
-// Array of calibration registers
-int cal_reg[11] = {47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57};
-
-// Variables and Arrays needed for website to work
-String text[6];
-String color[6];
 int selected = 1;
 
 // Variables used to measure battery voltage
@@ -49,9 +41,7 @@ float measuredvbat;
 float coeff[7];
 int32_t rawCoeff[4];
 int8_t rawTempCoeff[3];
-byte lowWord;
-byte highWord;
-byte words[20];
+word words[10];
 float sensor1;
 float sensor2;
 float temp1;
@@ -95,7 +85,8 @@ void setup()
 
   WiFi.setPins(8, 7, 4, 2); // needed for ATWINC1500
   Serial.begin(9600);
-  SPI.begin();    // moved ahead of setting up wifi, makes a difference?
+
+  SPI.begin();    // Starts SPI bus
   requestCalib(); // requests calibration coefficients from sensor EEPROM
 
   // Start WiFi network
@@ -423,12 +414,37 @@ void loop()
             // and a content-type so the client knows what's coming, then a blank line:
             client.println("HTTP/1.1 200 OK");
             client.println("Content-type:text/html");
+            client.println("Connection: keep-alive");
             client.println();
+
+            XML_response(client);
 
             // the content of the HTTP response follows the header:
             //HTML Setup Stuff
             client.println("<!DOCTYPE html> <html>");
             client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">");
+            
+            //Script for getting and processing the Arduino data
+            client.println("<script>");
+            client.println("function dataUpdate() {");
+            client.println("nocache = \"&nocache=\";"); // removed + Math.random() * 1000000 after \"
+            client.println("var request = new XMLHttpRequest();");
+            client.println("request.onreadystatechange = function() {");
+            client.println("if (this.readyState == 4) {");
+            client.println("if (this.status == 200) {");
+            client.println("if (this.responseXML != null) {");
+            client.println("document.getElementById(\"Upper\").value =this.responseXML.getElementsByTagName('upper')[0].childNodes[0].nodeValue;");
+            client.println("document.getElementById(\"Lower\").value =this.responseXML.getElementsByTagName('lower')[0].childNodes[0].nodeValue;");
+            client.println("document.getElementById(\"Average\").value =this.responseXML.getElementsByTagName('average')[0].childNodes[0].nodeValue;");
+            client.println("document.getElementById(\"Battery\").value =this.responseXML.getElementsByTagName('battery')[0].childNodes[0].nodeValue;");
+            client.println("}}}}");
+            client.println("request.open(\"GET\", \"ajax_inputs\" + nocache, true);");
+            client.println("request.send(null);");
+            client.println("setTimeout('dataUpdate()', 300);"); // 300 millisecond update rate
+            client.println("}");
+            client.println("</script>");
+
+            // Titling Webpage
             client.println("<title>Drag Rake Controls</title>");
             client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
             client.println("body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px; text-align: right;}");
@@ -446,31 +462,21 @@ void loop()
             client.println(".read {display: block; height: 64 px; width: 128px; background-color: #FFFFFF; ");
             client.print("color: white; padding: 13px 30px; font-size: 32px; margin: 0px auto 35px; cursor: pointer; border-radius: 4px;}");
 
-            //Create each data button (non-clickable): MIGHT NOT BE NEEDED
+/*            //Create each data button (non-clickable): MIGHT NOT BE NEEDED
             client.println(".upp {border-color: #000000;color: black;}");
             client.println(".low {border-color: #000000;color: black;}");
             client.println(".avg {border-color: #000000;color: black;}");
             client.println(".batt {border-color: #000000;color: black;}");
-
-            // Data Input
-            client.println("<inputs><upper>");
-            client.println(sensor1);
-            client.println("</upper>");
-            client.println("<lower>");
-            client.println(sensor2);
-            client.println("</lower>");
-            client.println("<average>");
-            client.println((sensor1 + sensor2) / (float)2);
-            client.println("</average>");
-            client.println("<battery>");
-            client.println(measuredvbat);
-            client.println("</battery>");
-            client.println("</inputs>");
-
+*/
             client.println("</style>");
             client.println("</head>");
-            client.println("<body>");
+            
+            // Calling update data script
+            client.println("<body onload=\"dataUpdate()\">");
 
+//            client.println("<body>");
+
+            client.println("<div>");
             // Title
             client.println("<h1>Drag Rake</h1>");
             client.println("<h3>Akaflieg SLO ATWINC1500 Proto-build</h3>");
@@ -481,66 +487,74 @@ void loop()
             client.print("<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;Pressure (Pa)</h2>");
             client.print("<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;Pressure (Pa)</h2>");
             client.println("<h2><input class=\"read batt\"id=\"Battery\" value=\"0\"/>Battery Remaining (%)</h2>");
+            client.println("</div>");
 
+            client.println("<div>");
             // Buttons
             client.println("<h3>Sensor Read Modes</h3>");
             switch (selected)
             {
             case 0:
               client.print("<a class=\"button button-off\" href=\"/\">OFF</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">ON</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">ON</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">ON</a>");
+              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+              client.println("<br>");
+              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
               break;
 
             case 1:
-              client.print("<a class=\"button button-on\" href=\"/\">ON</a>");
-              client.print("<a class=\"button button-off\" href=\"/read1\">OFF</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">ON</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">ON</a>");
+              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+              client.print("<a class=\"button button-off\" href=\"/read1\">Single</a>");
+              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+              client.println("<br>");
+              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
               break;
 
             case 2:
-              client.print("<a class=\"button button-on\" href=\"/\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">ON</a>");
-              client.println("<a class=\"button button-off\" href=\"/read2\">OFF</a>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">ON</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">ON</a>");
+              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+              client.println("<a class=\"button button-off\" href=\"/read2\">2 AVG</a>");
+              client.println("<br>");
+              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
               break;
 
             case 3:
-              client.print("<a class=\"button button-on\" href=\"/\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">ON</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">ON</a>");
-              client.print("<a class=\"button button-off\" href=\"/read4\">OFF</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">ON</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">ON</a>");
+              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+              client.println("<br>");
+              client.print("<a class=\"button button-off\" href=\"/read4\">4 AVG</a>");
+              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
               break;
 
             case 4:
-              client.print("<a class=\"button button-on\" href=\"/\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">ON</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">ON</a>");
-              client.print("<a class=\"button button-off\" href=\"/read8\">OFF</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">ON</a>");
+              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+              client.println("<br>");
+              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+              client.print("<a class=\"button button-off\" href=\"/read8\">8 AVG</a>");
+              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
               break;
 
             case 5:
-              client.print("<a class=\"button button-on\" href=\"/\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">ON</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">ON</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">ON</a>");
-              client.println("<a class=\"button button-off\" href=\"/read16\">OFF</a>");
+              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+              client.println("<br>");
+              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+              client.println("<a class=\"button button-off\" href=\"/read16\">16 AVG</a>");
               break;
             }
-
+            client.println("</div>");
             client.println("</body>");
             client.println("</html>");
 
@@ -629,32 +643,36 @@ void requestCalib()
     SPI.transfer(i);
     SPI.transfer(0x00);
     SPI.transfer(0x00);
-    uint32_t buff = (0xF0) | (0x00 << 8) | 0x00;
-    SPI.transfer(buff);
-
+    uint8_t buff[] = {0xF0, 0x00, 0x00};
+    byte outBuff[3];
+    outBuff[0] = SPI.transfer(buff[0]);
+    outBuff[1] = SPI.transfer(buff[1]);
+    outBuff[2] = SPI.transfer(buff[2]);
+    
     // Arduino transmits measurement start command, will receive back status byte and two bytes of "undefined data"
     toggle(1);
     SPI.endTransaction();
 
     // Parse bytes into one "word"
-    word x = word(byte(buff >> 8), byte(buff));
+    word x = word(byte(outBuff[1]), byte(outBuff[2]));
 
     // Add piece of data to the words
     words[j++] = x;
   }
   for (int b = 0; b < 4; b++)
   {
-    rawCoeff[b] = (words[(4 * b)] << 24) | (words[(4 * b) + 1] << 16) | (words[(4 * b) + 2] << 8) | (words[(4 * b) + 3]);
+    rawCoeff[b] = (words[(2 * b)] << 16) | (words[(2 * b) + 1]);
     coeff[b] = (float)rawCoeff[b] / (float)0x7FFFFFFF;
   }
 
   // Parse coefficient data to get coefficients
-  rawTempCoeff[0] = words[16];
-  rawTempCoeff[1] = words[17];
-  rawTempCoeff[2] = words[18];
+  rawTempCoeff[0] = (byte)words[8] >> 8;
+  rawTempCoeff[1] = (byte)words[8] ;
+  rawTempCoeff[2] = (byte)words[9] >> 8;
   coeff[4] = (float)rawTempCoeff[0] / (float)0x7F;
   coeff[5] = (float)rawTempCoeff[1] / (float)0x7F;
   coeff[6] = (float)rawTempCoeff[2] / (float)0x7F;
+
 }
 
 void toggle(int sensor)
@@ -671,8 +689,7 @@ void toggle(int sensor)
   }
 }
 
-/*
-// send the XML file with switch statuses and analog value
+// send the XML file with sensor data
 void XML_response(WiFiClient cl)
 {
   cl.print("<?xml version = \"1.0\" ?>");
@@ -691,7 +708,6 @@ void XML_response(WiFiClient cl)
   cl.print("</battery>");
   cl.print("</inputs>");
 }
-*/
 
 // Prints wifi status to serial port
 void printWiFiStatus()
@@ -727,13 +743,11 @@ int requestRead(int tog)
     uint32_t buff = ((start_comm[selected - 1] << 16) | (0x00 << 8) | 0x00);
     SPI.beginTransaction(sensors);
     toggle(tog);
-    SPI.transfer(&buff, 3);
+    SPI.transfer(&buff, 3); 
     //Arduino transmits measurement start command, will receive back status byte and two bytes of "undefined data"
     toggle(tog);
     SPI.endTransaction();
-  }
-  else
-  {
+    Serial.println(buff);
   }
 }
 
@@ -741,10 +755,10 @@ int requestRead(int tog)
 int waitForDone(int tog)
 {
   int i = 0;
-  bool lineReady = 0;
-  while (lineReady == 0)
+  bool lineReady = false;
+  while (lineReady == false)
   {
-
+    Serial.println("In the while loops");
     // If the sensor is still taking data, the bit will be 1.
     // If it is ready, the bit will be zero, and we can read data.
     byte Status = 0xF0;
@@ -752,17 +766,15 @@ int waitForDone(int tog)
     toggle(tog);
 
     //Arduino transmits 0xF0, receives back status byte
-    SPI.transfer(&Status, 3);
+    byte sensorStatus = SPI.transfer(Status); // REMOVED AMPERSAND ON STATUS
     toggle(tog);
     SPI.endTransaction();
     bool lineReady = 0;
-    if (bitRead(Status, 5) == 0)
+    Serial.println(bitRead(sensorStatus,5));
+    if (bitRead(sensorStatus, 5) == 0)
     {
-      lineReady = 1;
+      lineReady = true;
       break;
-    }
-    else
-    {
     }
   }
 }
@@ -794,8 +806,8 @@ float requestData(int tog, float *temperature)
   SPI.endTransaction();
 
   //Big 'ol calculation (which may not actually be right :/
-  iPraw = ((data[1] << 16) + (data[2] << 8) + (data[3]) - 0x800000);
-  iTemp = (data[4] << 16) + (data[5] << 8) + (data[6]);
+  iPraw = ((data[1] << 16) | (data[2] << 8) | (data[3]) - 0x800000);
+  iTemp = (data[4] << 16) | (data[5] << 8) | (data[6]);
   Pnorm = (float)iPraw;
   Pnorm /= (float)0x7FFFFF;
   AP3 = coeff[0] * Pnorm * Pnorm * Pnorm;
@@ -806,16 +818,16 @@ float requestData(int tog, float *temperature)
   // Compute Temperature - Dependent Adjustment:
   Tref = (int32_t)(pow(2, 24) * 65 / 125); // Reference Temperature, in sensor counts
   Tdiff = iTemp - Tref;
-  Tdiff = Tdiff / 0x7FFFFF;
+//  Tdiff = Tdiff / 0x7FFFFF;
 
   //TC50: Select High/Low, based on sensor temperature reading:
   if (iTemp > Tref)
   {
-    TC50 = (coeff[4] - 1);
+    TC50 = coeff[4];
   }
   else
   {
-    TC50 = (coeff[5] - 1);
+    TC50 = coeff[5];
   }
   if (Pnorm > 0.5)
   {
@@ -831,8 +843,8 @@ float requestData(int tog, float *temperature)
   PCorr = Pnorm + LCorr + TCadj;                    // corrected P: float, ±1.0
   iPCorrected = (int32_t)(PCorr * (float)0x7FFFFF); // corrected P: signed int32
   uiPCorrected = (uint32_t)(iPCorrected + 0x800000);
-  pressure = ((float)12.5 * ((float)uiPCorrected / (float)pow(2, 23)));
-  pressure = pressure - (float)9.69;
+  
+  pressure = (float)1.25 * ((float)(uiPCorrected - (0.5*pow(2,24)))/ (float)pow(2, 24)) * 2490.889; // convert to Pa
 
   // Calculating temperature (degrees Celcius)
   *temperature = ((iTemp * 125) / pow(2, 24)) - 40; // Celcius
@@ -844,7 +856,7 @@ void SD_write(String current_file)
 {
   // Creating Data String, see comments at top of code for formatting
   String dataString = String(millis() + "  " + String(sensor1) + "  " + String(sensor2) +
-                             "  " + String(temp1) + "  " + String(temp2) + "  " + String(measuredvbat));
+                      "  " + String(temp1) + "  " + String(temp2) + "  " + String(measuredvbat));
 
   // opening the file
   File dataFile = SD.open(current_file, FILE_WRITE);
