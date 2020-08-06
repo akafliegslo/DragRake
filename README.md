@@ -17,12 +17,12 @@ Power to the system is provided by a 400 mAh battery that is kept underneath the
 In order to ensure that a wide range of devices could wirelessly connect to Drag Rake, an agnotistic wireless connection scheme was developed by using a WiFi-equipped microcontroller. The microcontroller creates a wireless network and hosts a webpage that displays the data from Drag Rake in real time. An agnostic WiFi-equipped device can then connect to the network, find the webpage's IP address, and display the data in real time (updates automatically, no refreshing necessary). 
 
 ## Current Tasks
-- [ ] Implement SD card data logging
-- [ ] Convert from I2C data bus to SPI data bus
+- [x] Implement SD card data logging
+- [x] Convert from I2C data bus to SPI data bus
 - [ ] Software testing
 - [ ] Publish polished code to master! :shipit: 
-- [ ] PCB redesign for SPI
-- [ ] Create drawings from CAD for manufacturing
-- [ ] Create BOM for DIYers
+- [x] PCB redesign for SPI
+- [x] Create drawings from CAD for manufacturing
+- [x] Create BOM for DIYers
 - [ ] Create build guide for DIYers
 - [ ] Whitepaper on wireless interface
