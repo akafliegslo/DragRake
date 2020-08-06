@@ -61,10 +61,15 @@ char pass[] = "";         // Network password
 int keyIndex = 0;
 int status = WL_IDLE_STATUS;
 
+/*
 // Needed for HTTP requests to work
 #define REQ_BUF_SZ 50
 char HTTP_req[REQ_BUF_SZ] = {0}; // buffered HTTP request stored as null terminated string
 char req_index = 0;              // index into HTTP_req buffer
+*/
+
+String HTTP_req;
+bool currentLineIsBlank = true;
 
 // Set web server port number to 80 (Change if needed)
 WiFiServer server(80);
@@ -403,7 +408,16 @@ void loop()
       {                         // if there's bytes to read from the client,
         char c = client.read(); // read a byte, then
         Serial.write(c);        // print it out the serial monitor
-        if (c == '\n')
+
+        HTTP_req += c; // added wed
+        /*
+        if (req_index < (REQ_BUF_SZ - 1)) 
+        {
+          HTTP_req[req_index] = c;          // Save HTTP request character
+          req_index++;
+        }
+        */
+        if (c == '\n' && currentLineIsBlank)
         { // if the byte is a newline character
 
           // if the current line is blank, you got two newline characters in a row.
@@ -413,164 +427,194 @@ void loop()
             // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
             // and a content-type so the client knows what's coming, then a blank line:
             client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:text/html");
-            client.println("Connection: keep-alive");
-            client.println();
-
-            XML_response(client);
-
-            // the content of the HTTP response follows the header:
-            //HTML Setup Stuff
-            client.println("<!DOCTYPE html> <html>");
-            client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">");
-            
-            //Script for getting and processing the Arduino data
-            client.println("<script>");
-            client.println("function dataUpdate() {");
-            client.println("nocache = \"&nocache=\";"); // removed + Math.random() * 1000000 after \"
-            client.println("var request = new XMLHttpRequest();");
-            client.println("request.onreadystatechange = function() {");
-            client.println("if (this.readyState == 4) {");
-            client.println("if (this.status == 200) {");
-            client.println("if (this.responseXML != null) {");
-            client.println("document.getElementById(\"Upper\").value =this.responseXML.getElementsByTagName('upper')[0].childNodes[0].nodeValue;");
-            client.println("document.getElementById(\"Lower\").value =this.responseXML.getElementsByTagName('lower')[0].childNodes[0].nodeValue;");
-            client.println("document.getElementById(\"Average\").value =this.responseXML.getElementsByTagName('average')[0].childNodes[0].nodeValue;");
-            client.println("document.getElementById(\"Battery\").value =this.responseXML.getElementsByTagName('battery')[0].childNodes[0].nodeValue;");
-            client.println("}}}}");
-            client.println("request.open(\"GET\", \"ajax_inputs\" + nocache, true);");
-            client.println("request.send(null);");
-            client.println("setTimeout('dataUpdate()', 300);"); // 300 millisecond update rate
-            client.println("}");
-            client.println("</script>");
-
-            // Titling Webpage
-            client.println("<title>Drag Rake Controls</title>");
-            client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
-            client.println("body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px; text-align: right;}");
-            
-            // Button Characteristics
-            client.println(".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;");
-            client.print("text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}");
-            client.println(".button-on {background-color: #3498db;}");
-            client.println(".button-on:active {background-color: #2980b9;}");
-            client.println(".button-off {background-color: #34495e;}");
-            client.println(".button-off:active {background-color: #2c3e50;}");
-            client.println("p {font-size: 14px;color: #888;margin-bottom: 10px;}");
-
-            // Data Readout Characteristics
-            client.println(".read {display: block; height: 64 px; width: 128px; background-color: #FFFFFF; ");
-            client.print("color: white; padding: 13px 30px; font-size: 32px; margin: 0px auto 35px; cursor: pointer; border-radius: 4px;}");
-
-/*            //Create each data button (non-clickable): MIGHT NOT BE NEEDED
-            client.println(".upp {border-color: #000000;color: black;}");
-            client.println(".low {border-color: #000000;color: black;}");
-            client.println(".avg {border-color: #000000;color: black;}");
-            client.println(".batt {border-color: #000000;color: black;}");
-*/
-            client.println("</style>");
-            client.println("</head>");
-            
-            // Calling update data script
-            client.println("<body onload=\"dataUpdate()\">");
-
-//            client.println("<body>");
-
-            client.println("<div>");
-            // Title
-            client.println("<h1>Drag Rake</h1>");
-            client.println("<h3>Akaflieg SLO ATWINC1500 Proto-build</h3>");
-            client.println("<!-- EASTER EGG -->");
-
-            // Data displays
-            client.print("<h2><input class=\"read upp\" id=\"Upper\" value=\"0\"/>Upper Surface &Delta;Pressure (Pa)</h2>");
-            client.print("<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;Pressure (Pa)</h2>");
-            client.print("<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;Pressure (Pa)</h2>");
-            client.println("<h2><input class=\"read batt\"id=\"Battery\" value=\"0\"/>Battery Remaining (%)</h2>");
-            client.println("</div>");
-
-            client.println("<div>");
-            // Buttons
-            client.println("<h3>Sensor Read Modes</h3>");
-            switch (selected)
+            // if (StrContains(HTTP_req, "ajax_inputs")) 
+            if (HTTP_req.indexOf("ajax_switch") > -1) // added wed
             {
-            case 0:
-              client.print("<a class=\"button button-off\" href=\"/\">OFF</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
-              client.println("<br>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
-              break;
+              // send rest of HTTP header
+              client.println("Content-Type: text/xml");
+              client.println("Connection: keep-alive");
+              client.println();
+              // send XML file containing input states
+              XML_response(client);
+            }
+            
+            else 
+            {
+              client.println("Content-Type: text/html");
+              client.println("Connection: keep-alive");
+              client.println();
 
-            case 1:
-              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
-              client.print("<a class=\"button button-off\" href=\"/read1\">Single</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
-              client.println("<br>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
-              break;
+              // the content of the HTTP response follows the header:
+              //HTML Setup Stuff
+              client.println("<!DOCTYPE html> <html>");
+              client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">");
+              
+              //Script for getting and processing the Arduino data
+              client.println("<script>");
+              client.println("function dataUpdate() {");
+              client.println("nocache = \"&nocache=\";"); // removed + Math.random() * 1000000 after \"
+              client.println("var request = new XMLHttpRequest();");
+              client.println("request.onreadystatechange = function() {");
+              client.println("if (this.readyState == 4) {");
+              client.println("if (this.status == 200) {");
+              client.println("if (this.responseXML != null) {");
+              client.println("document.getElementById(\"Upper\").value =this.responseXML.getElementsByTagName('upper')[0].childNodes[0].nodeValue;");
+              client.println("document.getElementById(\"Lower\").value =this.responseXML.getElementsByTagName('lower')[0].childNodes[0].nodeValue;");
+              client.println("document.getElementById(\"Average\").value =this.responseXML.getElementsByTagName('average')[0].childNodes[0].nodeValue;");
+              client.println("document.getElementById(\"Battery\").value =this.responseXML.getElementsByTagName('battery')[0].childNodes[0].nodeValue;");
+              client.println("}}}}");
+              client.println("request.open(\"GET\", \"ajax_inputs\" + nocache, true);");
+              client.println("request.send(null);");
+              client.println("setTimeout('dataUpdate()', 300);"); // 300 millisecond update rate
+              client.println("}");
+              client.println("</script>");
 
-            case 2:
-              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
-              client.println("<a class=\"button button-off\" href=\"/read2\">2 AVG</a>");
-              client.println("<br>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
-              break;
+              // Titling Webpage
+              client.println("<title>Drag Rake Controls</title>");
+              client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
+              client.println("body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px; text-align: right;}");
+              
+              // Button Characteristics
+              client.println(".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;");
+              client.print("text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}");
+              client.println(".button-on {background-color: #3498db;}");
+              client.println(".button-on:active {background-color: #2980b9;}");
+              client.println(".button-off {background-color: #34495e;}");
+              client.println(".button-off:active {background-color: #2c3e50;}");
+              client.println("p {font-size: 14px;color: #888;margin-bottom: 10px;}");
 
-            case 3:
-              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
-              client.println("<br>");
-              client.print("<a class=\"button button-off\" href=\"/read4\">4 AVG</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
-              break;
+              // Data Readout Characteristics
+              client.println(".read {display: block; height: 64 px; width: 128px; background-color: #FFFFFF; ");
+              client.print("color: white; padding: 13px 30px; font-size: 32px; margin: 0px auto 35px; cursor: pointer; border-radius: 4px;}");
 
-            case 4:
-              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
-              client.println("<br>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
-              client.print("<a class=\"button button-off\" href=\"/read8\">8 AVG</a>");
-              client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
-              break;
+  /*            //Create each data button (non-clickable): MIGHT NOT BE NEEDED
+              client.println(".upp {border-color: #000000;color: black;}");
+              client.println(".low {border-color: #000000;color: black;}");
+              client.println(".avg {border-color: #000000;color: black;}");
+              client.println(".batt {border-color: #000000;color: black;}");
+  */
+              client.println("</style>");
+              client.println("</head>");
+              
+              // Calling update data script
+              client.println("<body onload=\"dataUpdate()\">");
 
-            case 5:
-              client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
-              client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
-              client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
-              client.println("<br>");
-              client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
-              client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
-              client.println("<a class=\"button button-off\" href=\"/read16\">16 AVG</a>");
+  //            client.println("<body>");
+
+              client.println("<div>");
+              // Title
+              client.println("<h1>Drag Rake</h1>");
+              client.println("<h3>Akaflieg SLO ATWINC1500 Proto-build</h3>");
+              client.println("<!-- EASTER EGG -->");
+
+              // Data displays
+              client.print("<h2><input class=\"read upp\" id=\"Upper\" value=\"0\"/>Upper Surface &Delta;Pressure (Pa)</h2>");
+              client.print("<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;Pressure (Pa)</h2>");
+              client.print("<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;Pressure (Pa)</h2>");
+              client.println("<h2><input class=\"read batt\"id=\"Battery\" value=\"0\"/>Battery Remaining (%)</h2>");
+              client.println("</div>");
+
+              client.println("<div>");
+              // Buttons
+              client.println("<h3>Sensor Read Modes</h3>");
+              
+              switch (selected)
+              {
+              case 0:
+                client.print("<a class=\"button button-off\" href=\"/\">OFF</a>");
+                client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+                client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+                client.println("<br>");
+                client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+                client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+                client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
+                break;
+
+              case 1:
+                client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+                client.print("<a class=\"button button-off\" href=\"/read1\">Single</a>");
+                client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+                client.println("<br>");
+                client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+                client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+                client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
+                break;
+
+              case 2:
+                client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+                client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+                client.println("<a class=\"button button-off\" href=\"/read2\">2 AVG</a>");
+                client.println("<br>");
+                client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+                client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+                client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
+                break;
+
+              case 3:
+                client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+                client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+                client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+                client.println("<br>");
+                client.print("<a class=\"button button-off\" href=\"/read4\">4 AVG</a>");
+                client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+                client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
+                break;
+
+              case 4:
+                client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+                client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+                client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+                client.println("<br>");
+                client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+                client.print("<a class=\"button button-off\" href=\"/read8\">8 AVG</a>");
+                client.println("<a class=\"button button-on\" href=\"/read16\">16 AVG</a>");
+                break;
+
+              case 5:
+                client.print("<a class=\"button button-on\" href=\"/\">OFF</a>");
+                client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
+                client.println("<a class=\"button button-on\" href=\"/read2\">2 AVG</a>");
+                client.println("<br>");
+                client.print("<a class=\"button button-on\" href=\"/read4\">4 AVG</a>");
+                client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
+                client.println("<a class=\"button button-off\" href=\"/read16\">16 AVG</a>");
+                break;
+              }
+              client.println("</div>");
+              client.println("</body>");
+              client.println("</html>");
+
+              // The HTTP response ends with another blank line:
+              client.println();
+              HTTP_req = "";
+              /* rem.
+              // finished with request, empty string
+              req_index = 0;
+              StrClear(HTTP_req, REQ_BUF_SZ);
+              // break out of the while loop:
+              */
               break;
             }
-            client.println("</div>");
-            client.println("</body>");
-            client.println("</html>");
-
-            // The HTTP response ends with another blank line:
-            client.println();
-            // break out of the while loop:
-            break;
           }
+          /* WHY IS THIS HERE? WHAT DOES IT DO?
           else
           { // if you got a newline, then clear currentLine:
             currentLine = "";
           }
+          */
+        }
+
+        if (c == '\n')
+        {
+          // last character on line of received text
+          // starting new line with next character read
+          currentLineIsBlank = true;
         }
         else if (c != '\r')
         {                   // if you got anything else but a carriage return character,
-          currentLine += c; // add it to the end of the currentLine
+          // REMOVED BELOW
+          // currentLine += c; // add it to the end of the currentLine rem.
+          currentLineIsBlank = false;          
         }
 
         // Checks read mode:
@@ -707,6 +751,44 @@ void XML_response(WiFiClient cl)
   cl.print(measuredvbat);
   cl.print("</battery>");
   cl.print("</inputs>");
+}
+
+// sets every element of str to 0 (clears array)
+void StrClear(char *str, char length)
+{
+  for (int i = 0; i < length; i++) {
+    str[i] = 0;
+  }
+}
+
+// searches for the string sfind in the string str
+// returns 1 if string found
+// returns 0 if string not found
+char StrContains(char *str, char *sfind)
+{
+  char found = 0;
+  char index = 0;
+  char len;
+
+  len = strlen(str);
+
+  if (strlen(sfind) > len) {
+    return 0;
+  }
+  while (index < len) {
+    if (str[index] == sfind[found]) {
+      found++;
+      if (strlen(sfind) == found) {
+        return 1;
+      }
+    }
+    else {
+      found = 0;
+    }
+    index++;
+  }
+
+  return 0;
 }
 
 // Prints wifi status to serial port

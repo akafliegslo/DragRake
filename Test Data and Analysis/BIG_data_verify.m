@@ -33,7 +33,7 @@ for jj = 1:length(filenames)
     ylabel('Pressure (pa)')
     legend('total', 'bot free', 'bot rake', 'top rake', 'top free')
     
-    saveas(gcf,graph_filenames{ii,jj})
+    % saveas(gcf,graph_filenames{ii,jj})
     
     % finding density and average tunnel speed
     rho = r*T/P_amb; % kg/m^3
