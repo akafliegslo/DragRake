@@ -39,16 +39,10 @@ float measuredvbat;
 
 // Variables used in calculations
 float coeff[7];
-int32_t rawCoeff[4];
-int8_t rawTempCoeff[3];
-word words[10];
 float sensor1;
 float sensor2;
 float temp1;
 float temp2;
-
-// SD Card Variables
-String current_file = "data.txt"; // start with default name
 
 // Required for Serial on Zero based boards
 #if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
@@ -56,17 +50,8 @@ String current_file = "data.txt"; // start with default name
 #endif
 
 // WiFi Network Variables
-char ssid[] = "DragRake"; // Network Name
-char pass[] = "";         // Network password
-int keyIndex = 0;
 int status = WL_IDLE_STATUS;
 
-/*
-// Needed for HTTP requests to work
-#define REQ_BUF_SZ 50
-char HTTP_req[REQ_BUF_SZ] = {0}; // buffered HTTP request stored as null terminated string
-char req_index = 0;              // index into HTTP_req buffer
-*/
 
 String HTTP_req;
 bool currentLineIsBlank = true;
@@ -77,52 +62,43 @@ WiFiServer server(80);
 // Variable to store the HTTP request
 String header;
 
-// SPI configurations
-SPISettings sensors(1000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
-
 // Setup -------------------------------------------------------------------------------------------------------
-void setup()
-{
+void setup() {
   // Set one sensor to active, the other to off
   pinMode(s1Toggle, OUTPUT);
   pinMode(s2Toggle, OUTPUT);
   pinMode(SD_card_CS, OUTPUT);
 
   WiFi.setPins(8, 7, 4, 2); // needed for ATWINC1500
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   SPI.begin();    // Starts SPI bus
-  requestCalib(); // requests calibration coefficients from sensor EEPROM
 
   // Start WiFi network
-  Serial.print("Creating access point named: ");
-  Serial.println(ssid);
-  WiFi.config(IPAddress(4, 20, 6, 9));   // Override the default IP address of 192.168.1.1
-  status = WiFi.beginAP(ssid);
+  Serial.print("Creating access point gals: ");
+  //WiFi.config(IPAddress(192, 168, 1, 1));
+  status = WiFi.beginAP("Drag Rake");
   if (status != WL_AP_LISTENING) {
     Serial.println("Creating access point failed");
     // Don't continue if creating the WiFi network failed
-    while (true);
+    while (true) {
+      } //Arduino is stupid
   }
 
   server.begin(); // starts WiFi server
   printWiFiStatus();
-  WiFi.lowPowerMode(); // tries to keep power draw during operation to a minimum
 
   // Initializing Sd card interface
   SD.begin(SD_card_CS);
   if (!SD.begin(SD_card_CS))
   {
-    Serial.println("SD Card Failure");
+    Serial.println("SD Card Failure"); /* starts printing here */
   }
 
   // Creating unique file name to avoid overwriting existing files
-  int i; // declare i for while loop
-  while (SD.exists(current_file)) // prevents overwriting data by generating a new file if one with the same name already exists
-  {
+  String current_file = "data.txt"; // start with default name
+  for(size_t i = 0; SD.exists(current_file); i++)
     current_file = String("data" + String(i) + ".txt");
-    i++;
-  }
 
   // Adding headers to data file
   File dataFile = SD.open(current_file, FILE_WRITE);
@@ -135,141 +111,47 @@ void setup()
     // print to the serial port too:
     Serial.println(dataHeader);
   }
-  Serial.print("a"); // debug 
-  
+
+  requestCalib(); // requests calibration coefficients from sensor EEPROM
+
+
 }
 
 // Loop --------------------------------------------------------------------------------------------------------
-void loop()
-{
-  recordData(); // records all the sensor data
+void loop() {
+  recordData();
 
-  Serial.print("rawTempCoeff");
-  for (int i = 0; i < 7; i++)
-  {
-    Serial.print(rawTempCoeff[i]);
-  }
-
-  Serial.print("Coeff");
-  for (int i = 0; i < 7; i++)
-  {
-    Serial.print(coeff[i]);
-  }
-
-  /*
   WiFiClient client = server.available();   // Listen for incoming clients
-  if (client)
-  {
+  if (client) {
     Serial.print("I am in client if statement");
-    boolean currentLineIsBlank = true;
-    String currentLine = "";                // Make a String to hold incoming data from the client
+    bool currentLineIsBlank = true;
+    String HTTP_req = "";                // Make a String to hold incoming data from the client
     int i = 0;
-    while (client.connected())
-    {
-       recordData(); // records all the sensor data
+    while (client.connected()) {
+
       Serial.print("I am in client connected while statement");
-      if (client.available())
-      {
+      if (client.available()) {
         Serial.print("I am in client available if statement");
         char c = client.read();             // Store the client data
 
-        if (req_index < (REQ_BUF_SZ - 1)) {
-          HTTP_req[req_index] = c;          // Save HTTP request character
-          req_index++;
-        }
-        if ((72 < i) && (i < 75))           // The data we are looking for (from the buttons) is at characters 73 - 74
-          // We get back the length of the string from each button. This string length
-          // Is different for each button, so by reading this length we can figure out which
-          // Button was pressed. This allows button processing to be greatly sped up
-        {
-          // Serial.println(c); //Debugging purposes
+        HTTP_req += c;
 
-          // This loop processes the data from the client request, and changes the variable "selected," which displays which
-          // button has been pressed, as well as changes the averaging type
-          char q[2];
-          q[i - 73] = c;
-          if (q[0] == '1')
-          {
-            if (i == 74)
-            {
-              if (q[1] == '0')
-              {
-                selected = 3;
-                Serial.println("4 AVG");
-              }
-              if (q[1] == '1')
-              {
-                selected = 4;
-                Serial.println("8 AVG");
-              }
-              if (q[1] == '2')
-              {
-                selected = 5;
-                Serial.println("16 AVG");
-              }
-              else
-              {
-              }
-            }
-            else
-            {
-            }
-          }
-          else if (i == 73)
-          {
-            if (q[0] == '5')
-            {
-              selected = 0;
-              Serial.println("Off");
-            }
-            else if (q[0] == '8')
-            {
-              selected = 1;
-              Serial.println("Single");
-            }
-            else if (q[0] == '9')
-            {
-              selected = 2;
-              Serial.println("2 AVG");
-            }
-          }
-          else
-          {
-          }
-        }
-        else
-        {
-        }
-        // End of button processing code (probably could be done much more efficiently
-
-        i++;
         if (c == '\n' && currentLineIsBlank) {
           // send a standard http response header
           client.println("HTTP/1.1 200 OK");
-          if (StrContains(HTTP_req, "ajax_inputs")) {
+          client.println("Content-Type: text/html");
+          client.println("Connection: keep-alive");
+          client.println();
+
+          if (HTTP_req.indexOf("ajax_inputs") > -1) {
             // send rest of HTTP header
-            client.println("Content-Type: text/xml");
-            client.println("Connection: keep-alive");
-            client.println();
+            // client.println("Content-Type: text/xml");
+            // client.println("Connection: keep-alive");
+            // client.println();
             // send XML file containing input states
             XML_response(client);
-          }
-          else {
-            client.println("Content-Type: text/html");
-            client.println("Connection: keep-alive");
-            client.println();
+          } else {
 
-            //            selected = 1;
-
-            //Set all the clickable buttons to be gray
-            for (int i = 0; i < 6; i++)
-            {
-              text[i] = "black";
-              color[i] = "ddd}";
-            }
-            //Set ONLY the selected button to be blue
-            text[selected] = "white";
-            color[selected] = "2196F3}";
 
             client.println("<!DOCTYPE html><html><head>");
             client.println("<title>Drag Rake Controls</title>");
@@ -277,7 +159,7 @@ void loop()
             //Script for getting and processing the Arduino data
             client.println("<script>");
             client.println("function GetSwitchState() {");
-            client.println("nocache = \"&nocache=\"+ Math.random() * 1000000;");
+            client.println("nocache = \"&nocache=\";");
             client.println("var request = new XMLHttpRequest();");
             client.println("request.onreadystatechange = function() {");
             client.println("if (this.readyState == 4) {");
@@ -314,16 +196,18 @@ void loop()
             client.println(".batt {border-color: #000000;color: black;}");
 
             //Button properties for the clickable buttons :
-            client.println(".btn {border: none;color: black;width: 128px; height: 64px;text - align: center;");
-            client.println("font - size: 32px;margin: 4px 2px;border - radius: 20px;}");
+            client.println(".button-on {background-color: #3498db;}");
+            client.println(".button-on:active {background-color: #2980b9;}");
+            client.println(".button-off {background-color: #34495e;}");
+            client.println(".button-off:active {background-color: #2c3e50;}");
 
             //Create each clickable button:
-            client.println(".off {color:" + text[0] + ";background-color: #" + color[0]);
-            client.println(".single {color:" + text[1] + ";background-color: #" + color[1]);
-            client.println(".avg2 {color:" + text[2] + ";background-color: #" + color[2]);
-            client.println(".avg4 {color:" + text[3] + ";background-color: #" + color[3]);
-            client.println(".avg8 {color:" + text[4] + ";background-color: #" + color[4]);
-            client.println(".avg16{color:" + text[5] + ";background-color: #" + color[5]);
+            // client.println(".off {color:" + text[0] + ";background-color: #" + color[0]);
+            // client.println(".single {color:" + text[1] + ";background-color: #" + color[1]);
+            // client.println(".avg2 {color:" + text[2] + ";background-color: #" + color[2]);
+            // client.println(".avg4 {color:" + text[3] + ";background-color: #" + color[3]);
+            // client.println(".avg8 {color:" + text[4] + ";background-color: #" + color[4]);
+            // client.println(".avg16{color:" + text[5] + ";background-color: #" + color[5]);
             client.println("</style></head>");
 
             //Body of code:
@@ -332,194 +216,18 @@ void loop()
             //Data Division:
             client.println("<div>");
             client.println("<h1>Akaflieg SLO Drag Rake</h1>");
-            client.println("<h2><input class=\"read upp\" id=\"Upper\" value=\"0\"/>Upper Surface &Delta;V (kts)</h2>");
-            client.println("<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;V (kts)</h2>");
-            client.println("<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;V (kts)</h2>");
+            client.println("<h2><input class=\"read upp\" id=\"Upper\" value=\"0\"/>Upper Surface &Delta;P (Pa)</h2>");
+            client.println("<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;P (Pa)</h2>");
+            client.println("<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;P (Pa)</h2>");
             client.println("<h2><input class=\"read batt\"id=\"Battery\" value=\"0\"/>Battery Remaining (%)</h2>");
             client.println("</div>");
 
             //Form Division:
-            client.println("<div>");
+            //client.println("<div>");
             client.println("<h1>Sensor Reader Mode</h1>");
-            client.println("<form method = \"post\">");
-            client.println("<input class = \"btn off\" type = \"submit\" name = \"1\" id=\"Off\" value = \"Off\" onclick = \"submit()\">");
-            client.println("<input class = \"btn single\" type = \"submit\" name = \"1\" id=\"Single\" value = \"Single\" onclick = \"submit()\">");
-            client.println("<input class = \"btn avg2\" type = \"submit\" name = \"123\" id=\"2 AVG\" value = \"2 AVG\" onclick = \"submit()\">");
-            client.println("<br>");
-            client.println("<input class = \"btn avg4\" type = \"submit\" name = \"1234\" id=\"4 AVG\" value = \"4 AVG\" onclick = \"submit()\">");
-            client.println("<input class = \"btn avg8\" type = \"submit\" name = \"13245\" id=\"8 AVG\" value = \"8 AVG\" onclick = \"submit()\">");
-            client.println("<input class = \"btn avg16\" type = \"submit\" name = \"12345\" id=\"16 AVG\" value = \"16 AVG\" onclick = \"submit()\">");
-            client.println("</form>");
-            client.println("</div>");
-            client.println("</body></html>");
-            client.println(); // The HTTP response ends with another blank line
+            // Buttons
 
-            /*
-               The text[] and color[] arrays simply hold a string telling the buttons what color
-               to have the background and text. This is so that I can easily set them all to the
-               same color, then only set one of them to be highlighted.
-
-               Now would be a good time to explain what all this stuff is (specifically the form).
-               The arduino receives a response from the computer each time a button is pressed,
-               in the form of name=value. So, for "Off", this would be "1=Off" which is 5 characters long.
-               I couldn't get the Arduino to tell me what the actual message was (I was planning to
-               parse the message to see if it was "Off" "Single" etc), but it will tell me the length
-               of the message. So, I made all the buttons send back a different length message so that
-               I can tell which one is being pressed.
-
-               What can I say, I was desperate.
-            
-          }
-
-          // finished with request, empty string
-          req_index = 0;
-          StrClear(HTTP_req, REQ_BUF_SZ);
-          break;
-        }
-
-        // every line of text received from the client ends with \r\n
-        if (c == '\n') {
-
-          // last character on line of received text
-          // starting new line with next character read
-          currentLineIsBlank = true;
-        }
-        else if (c != '\r') {
-
-          // a text character was received from client
-          currentLineIsBlank = false;
-        }
-      } // end if (client.available())
-    } // end while (client.connected())
-    delay(1);      // give the web browser time to receive the data
-    client.stop(); // close the connection
-  } // end if (client)
-  */
-
-  WiFiClient client = server.available(); // listen for incoming clients
-
-  if (client)
-  {                               // if you get a client,
-    Serial.println("new client"); // print a message out the serial port
-    String currentLine = "";      // make a String to hold incoming data from the client
-    while (client.connected())
-    { // loop while the client's connected
-      if (client.available())
-      {                         // if there's bytes to read from the client,
-        char c = client.read(); // read a byte, then
-        Serial.write(c);        // print it out the serial monitor
-
-        HTTP_req += c; // added wed
-        /*
-        if (req_index < (REQ_BUF_SZ - 1)) 
-        {
-          HTTP_req[req_index] = c;          // Save HTTP request character
-          req_index++;
-        }
-        */
-        if (c == '\n' && currentLineIsBlank)
-        { // if the byte is a newline character
-
-          // if the current line is blank, you got two newline characters in a row.
-          // that's the end of the client HTTP request, so send a response:
-          if (currentLine.length() == 0)
-          {
-            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-            // and a content-type so the client knows what's coming, then a blank line:
-            client.println("HTTP/1.1 200 OK");
-            // if (StrContains(HTTP_req, "ajax_inputs")) 
-            if (HTTP_req.indexOf("ajax_switch") > -1) // added wed
-            {
-              // send rest of HTTP header
-              client.println("Content-Type: text/xml");
-              client.println("Connection: keep-alive");
-              client.println();
-              // send XML file containing input states
-              XML_response(client);
-            }
-            
-            else 
-            {
-              client.println("Content-Type: text/html");
-              client.println("Connection: keep-alive");
-              client.println();
-
-              // the content of the HTTP response follows the header:
-              //HTML Setup Stuff
-              client.println("<!DOCTYPE html> <html>");
-              client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">");
-              
-              //Script for getting and processing the Arduino data
-              client.println("<script>");
-              client.println("function dataUpdate() {");
-              client.println("nocache = \"&nocache=\";"); // removed + Math.random() * 1000000 after \"
-              client.println("var request = new XMLHttpRequest();");
-              client.println("request.onreadystatechange = function() {");
-              client.println("if (this.readyState == 4) {");
-              client.println("if (this.status == 200) {");
-              client.println("if (this.responseXML != null) {");
-              client.println("document.getElementById(\"Upper\").value =this.responseXML.getElementsByTagName('upper')[0].childNodes[0].nodeValue;");
-              client.println("document.getElementById(\"Lower\").value =this.responseXML.getElementsByTagName('lower')[0].childNodes[0].nodeValue;");
-              client.println("document.getElementById(\"Average\").value =this.responseXML.getElementsByTagName('average')[0].childNodes[0].nodeValue;");
-              client.println("document.getElementById(\"Battery\").value =this.responseXML.getElementsByTagName('battery')[0].childNodes[0].nodeValue;");
-              client.println("}}}}");
-              client.println("request.open(\"GET\", \"ajax_inputs\" + nocache, true);");
-              client.println("request.send(null);");
-              client.println("setTimeout('dataUpdate()', 300);"); // 300 millisecond update rate
-              client.println("}");
-              client.println("</script>");
-
-              // Titling Webpage
-              client.println("<title>Drag Rake Controls</title>");
-              client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
-              client.println("body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px; text-align: right;}");
-              
-              // Button Characteristics
-              client.println(".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;");
-              client.print("text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}");
-              client.println(".button-on {background-color: #3498db;}");
-              client.println(".button-on:active {background-color: #2980b9;}");
-              client.println(".button-off {background-color: #34495e;}");
-              client.println(".button-off:active {background-color: #2c3e50;}");
-              client.println("p {font-size: 14px;color: #888;margin-bottom: 10px;}");
-
-              // Data Readout Characteristics
-              client.println(".read {display: block; height: 64 px; width: 128px; background-color: #FFFFFF; ");
-              client.print("color: white; padding: 13px 30px; font-size: 32px; margin: 0px auto 35px; cursor: pointer; border-radius: 4px;}");
-
-  /*            //Create each data button (non-clickable): MIGHT NOT BE NEEDED
-              client.println(".upp {border-color: #000000;color: black;}");
-              client.println(".low {border-color: #000000;color: black;}");
-              client.println(".avg {border-color: #000000;color: black;}");
-              client.println(".batt {border-color: #000000;color: black;}");
-  */
-              client.println("</style>");
-              client.println("</head>");
-              
-              // Calling update data script
-              client.println("<body onload=\"dataUpdate()\">");
-
-  //            client.println("<body>");
-
-              client.println("<div>");
-              // Title
-              client.println("<h1>Drag Rake</h1>");
-              client.println("<h3>Akaflieg SLO ATWINC1500 Proto-build</h3>");
-              client.println("<!-- EASTER EGG -->");
-
-              // Data displays
-              client.print("<h2><input class=\"read upp\" id=\"Upper\" value=\"0\"/>Upper Surface &Delta;Pressure (Pa)</h2>");
-              client.print("<h2><input class=\"read low\" id=\"Lower\" value=\"0\"/>Lower Surface &Delta;Pressure (Pa)</h2>");
-              client.print("<h2><input class=\"read avg\"id=\"Average\" value=\"0\"/>Average &Delta;Pressure (Pa)</h2>");
-              client.println("<h2><input class=\"read batt\"id=\"Battery\" value=\"0\"/>Battery Remaining (%)</h2>");
-              client.println("</div>");
-
-              client.println("<div>");
-              // Buttons
-              client.println("<h3>Sensor Read Modes</h3>");
-              
-              switch (selected)
-              {
+            switch (selected) {
               case 0:
                 client.print("<a class=\"button button-off\" href=\"/\">OFF</a>");
                 client.print("<a class=\"button button-on\" href=\"/read1\">Single</a>");
@@ -579,73 +287,61 @@ void loop()
                 client.print("<a class=\"button button-on\" href=\"/read8\">8 AVG</a>");
                 client.println("<a class=\"button button-off\" href=\"/read16\">16 AVG</a>");
                 break;
-              }
-              client.println("</div>");
-              client.println("</body>");
-              client.println("</html>");
-
-              // The HTTP response ends with another blank line:
-              client.println();
-              HTTP_req = "";
-              /* rem.
-              // finished with request, empty string
-              req_index = 0;
-              StrClear(HTTP_req, REQ_BUF_SZ);
-              // break out of the while loop:
-              */
-              break;
             }
+
+            //client.println("</div>");
+            client.println("</body></html>");
+            client.println(); // The HTTP response ends with another blank line
+
           }
-          /* WHY IS THIS HERE? WHAT DOES IT DO?
-          else
-          { // if you got a newline, then clear currentLine:
-            currentLine = "";
-          }
-          */
+
+          // finished with request, empty string
+          HTTP_req = "";
+          break;
         }
 
-        if (c == '\n')
-        {
+        // every line of text received from the client ends with \r\n
+        if (c == '\n') {
+
           // last character on line of received text
           // starting new line with next character read
           currentLineIsBlank = true;
-        }
-        else if (c != '\r')
-        {                   // if you got anything else but a carriage return character,
-          // REMOVED BELOW
-          // currentLine += c; // add it to the end of the currentLine rem.
-          currentLineIsBlank = false;          
+          HTTP_req = "";
+        } else if (c != '\r') {
+          // a text character was received from client
+          currentLineIsBlank = false;
         }
 
         // Checks read mode:
-        if (currentLine.endsWith("GET /")) {
+        if (HTTP_req.startsWith("GET /"))
           selected = 0;
-        } else if (currentLine.endsWith("GET /read1")) {
+
+        if (HTTP_req.startsWith("GET /read1")) {
           selected = 1;
-        } else if (currentLine.endsWith("GET /read2")) {
+        } else if (HTTP_req.startsWith("GET /read2")) {
           selected = 2;
-        } else if (currentLine.endsWith("GET /read4")) {
+        } else if (HTTP_req.startsWith("GET /read4")) {
           selected = 3;
-        } else if (currentLine.endsWith("GET /read8")) {
+        } else if (HTTP_req.startsWith("GET /read8")) {
           selected = 4;
-        } else if (currentLine.endsWith("GET /read16")) {
+        } else if (HTTP_req.startsWith("GET /read16")) {
           selected = 5;
-        }    
+        }
         Serial.print("Selected mode:");
-        Serial.println(selected);    
-      }
-    }
-    // close the connection:
-    client.stop();
-    Serial.println("client disconnected");
-  }
+        Serial.println(selected);
+
+      } // end if (client.available())
+    } // end while (client.connected())
+    delay(1);      // give the web browser time to receive the data
+    client.stop(); // close the connection
+  } // end if (client)
+
 }
 
 // Functions ------------------------------------------------------------------------------------------
 
 // Takes all data independent of wifi in case client isn't connected
-void recordData()
-{
+void recordData() {
   Serial.println("I take data now");
   takeMeasurements();
 
@@ -659,13 +355,11 @@ void recordData()
   measuredvbat *= 6.6;  // Multiply by 2 and 3.3V, our reference voltage
   measuredvbat /= 1024; // convert to voltage
   Serial.println(measuredvbat);
-  delay(1000);
-  //SD_write(current_file); // Write values to SD Card
+
 }
 
 // Reads data from both sensors and stores it in global variable
-void takeMeasurements()
-{
+void takeMeasurements() {
   requestRead(1);
   waitForDone(1);
   sensor1 = requestData(1, &temp1);
@@ -676,66 +370,65 @@ void takeMeasurements()
 }
 
 // Get calibration data from sensors (On startup)
-void requestCalib()
-{
+void requestCalib() {
   // Coefficients are the same from both sensors, so we only need them from one
+  Serial.println("Tryin' to calibrate");
   int j = 0;
-  for (byte i = 0x2F; i < 0x39; i++)
-  {
+  toggle(1);
+  uint16_t words[10];
+  for (byte i = 0x2F; i < 0x39; i++) {
+    SPISettings sensors(1000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
     SPI.beginTransaction(sensors);
-    toggle(1);
+
     SPI.transfer(i);
     SPI.transfer(0x00);
     SPI.transfer(0x00);
-    uint8_t buff[] = {0xF0, 0x00, 0x00};
-    byte outBuff[3];
-    outBuff[0] = SPI.transfer(buff[0]);
-    outBuff[1] = SPI.transfer(buff[1]);
-    outBuff[2] = SPI.transfer(buff[2]);
-    
+    Serial.println("Transfered request");
+    byte outBuff[2];
+    SPI.transfer(0xF0);
+    outBuff[0] = SPI.transfer(0x00);
+    outBuff[1] = SPI.transfer(0x00);
+    Serial.println("Received high and low byte");
+
     // Arduino transmits measurement start command, will receive back status byte and two bytes of "undefined data"
-    toggle(1);
     SPI.endTransaction();
 
     // Parse bytes into one "word"
-    word x = word(byte(outBuff[1]), byte(outBuff[2]));
+    uint16_t x = (outBuff[0] << 8) | (outBuff[1]);
 
     // Add piece of data to the words
     words[j++] = x;
   }
-  for (int b = 0; b < 4; b++)
-  {
+
+  toggle(1);
+  Serial.println("Exited loop");
+  int32_t rawCoeff[4];
+  for (int b = 0; b < 4; b++) {
     rawCoeff[b] = (words[(2 * b)] << 16) | (words[(2 * b) + 1]);
     coeff[b] = (float)rawCoeff[b] / (float)0x7FFFFFFF;
   }
-
+Serial.println("Stacked coefficients");
   // Parse coefficient data to get coefficients
-  rawTempCoeff[0] = (byte)words[8] >> 8;
-  rawTempCoeff[1] = (byte)words[8] ;
-  rawTempCoeff[2] = (byte)words[9] >> 8;
-  coeff[4] = (float)rawTempCoeff[0] / (float)0x7F;
-  coeff[5] = (float)rawTempCoeff[1] / (float)0x7F;
-  coeff[6] = (float)rawTempCoeff[2] / (float)0x7F;
+  int8_t rawTempCoeff[3] = {((byte)words[8] >> 8), (byte)words[8], ((byte)words[9] >> 8)};
+  coeff[4] = (float)rawTempCoeff[0] / 0x7F;
+  coeff[5] = (float)rawTempCoeff[1] / 0x7F;
+  coeff[6] = (float)rawTempCoeff[2] / 0x7F;
 
 }
 
-void toggle(int sensor)
-{
-  if (sensor == 2)
-  {
+void toggle(int sensor) {
+  if (sensor == 2) {
     digitalWrite(s2Toggle, !sen1);
     sen1 = !sen1;
-  }
-  else if (sensor == 1)
-  {
+  } else if (sensor == 1) {
     digitalWrite(s1Toggle, !sen2);
     sen2 = !sen2;
   }
 }
 
 // send the XML file with sensor data
-void XML_response(WiFiClient cl)
-{
+void XML_response(WiFiClient cl) {
+  recordData();
   cl.print("<?xml version = \"1.0\" ?>");
   cl.print("<inputs>");
   cl.print("<upper>");
@@ -750,51 +443,12 @@ void XML_response(WiFiClient cl)
   cl.print("<battery>");
   cl.print(measuredvbat);
   cl.print("</battery>");
+
   cl.print("</inputs>");
 }
 
-// sets every element of str to 0 (clears array)
-void StrClear(char *str, char length)
-{
-  for (int i = 0; i < length; i++) {
-    str[i] = 0;
-  }
-}
-
-// searches for the string sfind in the string str
-// returns 1 if string found
-// returns 0 if string not found
-char StrContains(char *str, char *sfind)
-{
-  char found = 0;
-  char index = 0;
-  char len;
-
-  len = strlen(str);
-
-  if (strlen(sfind) > len) {
-    return 0;
-  }
-  while (index < len) {
-    if (str[index] == sfind[found]) {
-      found++;
-      if (strlen(sfind) == found) {
-        return 1;
-      }
-    }
-    else {
-      found = 0;
-    }
-    index++;
-  }
-
-  return 0;
-}
-
 // Prints wifi status to serial port
-void printWiFiStatus()
-{
-
+void printWiFiStatus() {
   // print the SSID of the network you're attached to:
   Serial.print("SSID: ");
   Serial.println(WiFi.SSID());
@@ -816,30 +470,26 @@ void printWiFiStatus()
 }
 
 // Starts read of pressure and temperature data
-int requestRead(int tog)
-{
+int requestRead(int tog) {
   // If button is not set to "Off"
-  if (selected > 0)
-  {
+  if (selected > 0) {
     Serial.println("Trying to request sensor data");
-    uint32_t buff = ((start_comm[selected - 1] << 16) | (0x00 << 8) | 0x00);
+    uint32_t buff[1] = {((start_comm[selected - 1] << 16) | 0x0000)};
+    SPISettings sensors(1000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
     SPI.beginTransaction(sensors);
     toggle(tog);
-    SPI.transfer(&buff, 3); 
+    SPI.transfer(&buff, 3);
     //Arduino transmits measurement start command, will receive back status byte and two bytes of "undefined data"
     toggle(tog);
     SPI.endTransaction();
-    Serial.println(buff);
   }
 }
 
 // Allows us to wait for the sensor to be done reading before asking for data back
-int waitForDone(int tog)
-{
-  int i = 0;
-  bool lineReady = false;
-  while (lineReady == false)
-  {
+int waitForDone(int tog) {
+    SPISettings sensors(1000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
+
+  while (true) {
     Serial.println("In the while loops");
     // If the sensor is still taking data, the bit will be 1.
     // If it is ready, the bit will be zero, and we can read data.
@@ -848,85 +498,73 @@ int waitForDone(int tog)
     toggle(tog);
 
     //Arduino transmits 0xF0, receives back status byte
-    byte sensorStatus = SPI.transfer(Status); // REMOVED AMPERSAND ON STATUS
+    byte sensorStatus = SPI.transfer(Status);
     toggle(tog);
     SPI.endTransaction();
-    bool lineReady = 0;
-    Serial.println(bitRead(sensorStatus,5));
-    if (bitRead(sensorStatus, 5) == 0)
-    {
-      lineReady = true;
+
+    Serial.println(sensorStatus & 0x20);
+    if ((sensorStatus & 0x20) == 0) {
       break;
     }
   }
 }
 
 // Requests temperature and pressure data back from sensors
-float requestData(int tog, float *temperature)
-{
-  int32_t iPraw;
-  float pressure;
-  int32_t iTemp;
-  float AP3, BP2, CP, LCorr, PCorr, Padj, TCadj, TC50, Pnorm;
-  int32_t Tdiff, Tref, iPCorrected;
-  uint32_t uiPCorrected;
+float requestData(int tog, float *temperature) {
+    SPISettings sensors(1000000, MSBFIRST, SPI_MODE0); //Both sensors are logic state low
+
   Serial.println("Trying to take sensor data");
   // Get data from SPI lines
+
   SPI.beginTransaction(sensors);
   toggle(tog);
   byte stat = SPI.transfer(0xF0);
-  byte p3 = SPI.transfer(0x00);
+  byte p3 = SPI.transfer(0x00); // (float)
   byte p2 = SPI.transfer(0x00);
   byte p1 = SPI.transfer(0x00);
   byte t3 = SPI.transfer(0x00);
   byte t2 = SPI.transfer(0x00);
   byte t1 = SPI.transfer(0x00);
-  unsigned char data[7] = {stat, p3, p2, p1, t3, t2, t1};
 
   // Arduino transmits read command, gets back lots of data (hopefully)
   toggle(tog);
   SPI.endTransaction();
 
   //Big 'ol calculation (which may not actually be right :/
-  iPraw = ((data[1] << 16) | (data[2] << 8) | (data[3]) - 0x800000);
-  iTemp = (data[4] << 16) | (data[5] << 8) | (data[6]);
-  Pnorm = (float)iPraw;
-  Pnorm /= (float)0x7FFFFF;
-  AP3 = coeff[0] * Pnorm * Pnorm * Pnorm;
-  BP2 = coeff[1] * Pnorm * Pnorm;
-  CP = coeff[2] * Pnorm;
-  LCorr = AP3 + BP2 + CP + coeff[3];
+  int32_t iPraw = ((p3 << 16) | (p2 << 8) | p1) - 0x800000;
+  int32_t iTemp = (t3 << 16) | (t2 << 8) | t1;
+  float Pnorm = (float)iPraw / 0x7FFFFF;
+
+  float AP3 = coeff[0] * Pnorm * Pnorm * Pnorm;
+  float BP2 = coeff[1] * Pnorm * Pnorm;
+  float CP = coeff[2] * Pnorm;
+  float LCorr = AP3 + BP2 + CP + coeff[3];
 
   // Compute Temperature - Dependent Adjustment:
-  Tref = (int32_t)(pow(2, 24) * 65 / 125); // Reference Temperature, in sensor counts
-  Tdiff = iTemp - Tref;
-//  Tdiff = Tdiff / 0x7FFFFF;
+  int32_t Tref = (int32_t)(pow(2, 24) * 65 / 125); // Reference Temperature, in sensor counts
+  int32_t Tdiff = iTemp - Tref;
 
   //TC50: Select High/Low, based on sensor temperature reading:
+  float TC50;
+
   if (iTemp > Tref)
-  {
     TC50 = coeff[4];
-  }
   else
-  {
     TC50 = coeff[5];
-  }
+
+  float Padj;
   if (Pnorm > 0.5)
-  {
     Padj = Pnorm - 0.5;
-  }
   else
-  {
     Padj = 0.5 - Pnorm;
-  }
 
   // Calculating compensated pressure
-  TCadj = (1.0 - (coeff[6] * 1.25 * Padj)) * Tdiff * TC50;
-  PCorr = Pnorm + LCorr + TCadj;                    // corrected P: float, ±1.0
-  iPCorrected = (int32_t)(PCorr * (float)0x7FFFFF); // corrected P: signed int32
-  uiPCorrected = (uint32_t)(iPCorrected + 0x800000);
-  
-  pressure = (float)1.25 * ((float)(uiPCorrected - (0.5*pow(2,24)))/ (float)pow(2, 24)) * 2490.889; // convert to Pa
+  float TCadj = (1.0 - (coeff[6] * 1.25 * Padj)) * Tdiff * TC50;
+  float PCorr = Pnorm + LCorr + TCadj;                    // corrected P: float, ±1.0
+  int32_t iPCorrected = (int32_t)(PCorr * (float)0x7FFFFF); // corrected P: signed int32
+  uint32_t uiPCorrected = (uint32_t)(iPCorrected + 0x800000);
+
+  float pressure = (float)1.25 * ((float)(uiPCorrected - (0.5*pow(2,24)))/ (float)pow(2, 24)) * 2490.889; // convert to Pa
 
   // Calculating temperature (degrees Celcius)
   *temperature = ((iTemp * 125) / pow(2, 24)) - 40; // Celcius
@@ -934,8 +572,7 @@ float requestData(int tog, float *temperature)
   return pressure;
 }
 
-void SD_write(String current_file)
-{
+void SD_write(String current_file) {
   // Creating Data String, see comments at top of code for formatting
   String dataString = String(millis() + "  " + String(sensor1) + "  " + String(sensor2) +
                       "  " + String(temp1) + "  " + String(temp2) + "  " + String(measuredvbat));
@@ -944,16 +581,12 @@ void SD_write(String current_file)
   File dataFile = SD.open(current_file, FILE_WRITE);
 
   // if the file is available, write to it:
-  if (dataFile)
-  {
+  if (dataFile) {
     dataFile.println(dataString);
     dataFile.close();
     // print to the serial port too:
     Serial.println(dataString);
-  }
-  // if the file isn't open, pop up an error:
-  else
-  {
+  } else {
     Serial.println("error opening file");
   }
 }
